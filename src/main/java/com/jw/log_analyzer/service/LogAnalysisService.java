@@ -16,7 +16,8 @@ import java.util.stream.Collectors;
 public class LogAnalysisService {
 
     private final LogRepository repository;
-    private static final Path OUTPUT = Path.of("src/main/resources/logs/kokoa-result.txt");
+    // 변경: 클래스패스 내부가 아닌 프로젝트 루트의 logs 폴더로 출력
+    private static final Path OUTPUT = Path.of("logs", "kokoa-result.txt");
 
     public LogAnalysisService(LogRepository repository) {
         this.repository = repository;
@@ -78,6 +79,7 @@ public class LogAnalysisService {
         dto.getBrowserRatio().forEach((k, v) -> lines.add(String.format("%s: %.2f%%", k, v)));
 
         try {
+            // OUTPUT의 부모 폴더가 없으면 생성
             Files.createDirectories(OUTPUT.getParent());
             Files.write(OUTPUT, lines, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
         } catch (IOException e) {
