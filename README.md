@@ -2,7 +2,7 @@
 
 Spring Boot 기반의 Open API 웹 로그 분석 프로그램
 
-# 1. 프로젝트 개요
+## 1. 프로젝트 개요
 
 Open API 호출 로그를 분석하여 다음 정보를 산출
 
@@ -12,7 +12,7 @@ Open API 호출 로그를 분석하여 다음 정보를 산출
 
 - 웹 브라우저별 사용 비율
 
-# 2. 아키텍처 구조
+## 2. 아키텍처 구조
 
 ```
 Client
@@ -21,7 +21,7 @@ Client
 → Repository
 ```
 
-# 3. 로그 파싱 설계
+## 3. 로그 파싱 설계
 
 로그 형식
 ```
@@ -52,7 +52,7 @@ public LogEntryDto parseLog(String line) {
 
 - DTO를 통해 계층 간 결합도 감소
 
-# 4. 통계 처리 방식
+## 4. 통계 처리 방식
 
 APIKEY 및 Service ID 통계는 Map 기반으로 처리
 
@@ -70,7 +70,7 @@ Map 선택 이유
 
 - 코드 단순성과 성능 균형 확보
 
-# 5. 상위 3개 Service ID 추출
+## 5. 상위 3개 Service ID 추출
 ```java
 List<Map.Entry<String, Integer>> topServices =
     serviceCount.entrySet()
@@ -86,7 +86,7 @@ List<Map.Entry<String, Integer>> topServices =
 
 - 향후 상위 N개로 확장 가능
 
-# 6. 브라우저 비율 계산
+## 6. 브라우저 비율 계산
 ```java
 double ratio = (double) browserCount / totalCount * 100;
 ```
@@ -95,7 +95,7 @@ double ratio = (double) browserCount / totalCount * 100;
 
 - 표현 단계에서 소수점 포맷팅 가능
 
-# 7. Repository 분리 이유
+## 7. Repository 분리 이유
 
 현재는 파일 기반 로그를 읽습니다.
 
@@ -111,7 +111,7 @@ public List<String> readLogs(String filePath) throws IOException {
 
 - 확장성 확보
 
-# 8. Service 계층 중심 설계
+## 8. Service 계층 중심 설계
 
 Service는 전체 분석 흐름을 제어
 
@@ -134,14 +134,14 @@ public AnalysisResultDto analyze(List<String> lines) {
 
 - 테스트 시 Service 단독 검증 가능
 
-# 9. 기술 스택
+## 9. 기술 스택
 
 - Language: Java
 - Framework: Spring Boot
 - Build Tool: Gradle
 - Architecture: Layered Architecture
 
-# 10. 프로젝트 구조
+## 10. 프로젝트 구조
 ```
 src/main/java/com/jw/log_analyzer
 ├── controller
@@ -156,7 +156,7 @@ src/main/java/com/jw/log_analyzer
 └── LogAnalyzerApplication.java
 ```
 
-# 11. 확장 가능성
+## 11. 확장 가능성
 
 - DB 연동 시 Repository 교체로 확장 가능
 
