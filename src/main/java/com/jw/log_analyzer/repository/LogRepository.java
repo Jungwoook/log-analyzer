@@ -26,18 +26,22 @@ public class LogRepository {
         try (BufferedReader br = new BufferedReader(new InputStreamReader(new ClassPathResource("logs/kokoa.txt").getInputStream(), StandardCharsets.UTF_8))) {
             String line;
             while ((line = br.readLine()) != null) {
-                Matcher m = LINE_PATTERN.matcher(line);
-                if (!m.find()) continue;
-                int status = Integer.parseInt(m.group(1));
-                String url = m.group(2);
-                String browser = m.group(3);
-                String timeStr = m.group(4);
-                LocalDateTime ts = LocalDateTime.parse(timeStr, DATE_FORMAT);
+                try {
+                    Matcher m = LINE_PATTERN.matcher(line);
+                    if (!m.find()) continue;
+                    int status = Integer.parseInt(m.group(1));
+                    String url = m.group(2);
+                    String browser = m.group(3);
+                    String timeStr = m.group(4);
+                    LocalDateTime ts = LocalDateTime.parse(timeStr, DATE_FORMAT);
 
-                String apiService = extractServiceId(url);
-                String apiKey = extractApiKey(url);
+                    String apiService = extractServiceId(url);
+                    String apiKey = extractApiKey(url);
 
-                result.add(new LogEntryDto(status, url, apiService, apiKey, browser, ts));
+                    result.add(new LogEntryDto(status, url, apiService, apiKey, browser, ts));
+                } catch (RuntimeException ignored) {
+                    // Ignore malformed lines and continue processing the rest.
+                }
             }
         } catch (Exception e) {
             throw new RuntimeException("Failed to read logs", e);

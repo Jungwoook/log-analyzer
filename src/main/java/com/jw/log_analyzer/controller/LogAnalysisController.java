@@ -22,14 +22,13 @@ public class LogAnalysisController {
 
     @GetMapping("/api/analyze")
     public ResponseEntity<FileSystemResource> analyze() {
-        service.analyzeAndWrite();
-        Path p = service.getResultPath();
+        Path p = service.analyzeAndWriteToFile();
         if (!p.toFile().exists()) {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
         }
         FileSystemResource resource = new FileSystemResource(p.toFile());
         HttpHeaders headers = new HttpHeaders();
-        headers.setContentDisposition(ContentDisposition.attachment().filename("kokoa-result.txt").build());
+        headers.setContentDisposition(ContentDisposition.attachment().filename(p.getFileName().toString()).build());
         headers.add(HttpHeaders.CONTENT_TYPE, "text/plain; charset=UTF-8");
         return ResponseEntity.ok().headers(headers).body(resource);
     }

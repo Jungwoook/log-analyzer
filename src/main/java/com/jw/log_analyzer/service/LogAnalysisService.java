@@ -15,18 +15,30 @@ import java.util.stream.Collectors;
 @Service
 public class LogAnalysisService {
 
+    private static final Path OUTPUT_DIR = Path.of("logs");
     private final LogRepository repository;
-    // 변경: 클래스패스 내부가 아닌 프로젝트 루트의 logs 폴더로 출력
-    private static final Path OUTPUT = Path.of("logs", "kokoa-result.txt");
 
     public LogAnalysisService(LogRepository repository) {
         this.repository = repository;
     }
 
     public AnalysisResultDto analyzeAndWrite() {
+        AnalysisResultDto dto = analyze();
+        Path output = createOutputPath();
+        writeResultFile(dto, output);
+        return dto;
+    }
+
+    public Path analyzeAndWriteToFile() {
+        AnalysisResultDto dto = analyze();
+        Path output = createOutputPath();
+        writeResultFile(dto, output);
+        return output;
+    }
+
+    private AnalysisResultDto analyze() {
         List<LogEntryDto> logs = repository.readAllLogs();
 
-        // apikey counts
         Map<String, Long> apiKeyCounts = logs.stream()
                 .map(LogEntryDto::getApiKey)
                 .filter(Objects::nonNull)
@@ -37,7 +49,6 @@ public class LogAnalysisService {
                 .map(Map.Entry::getKey)
                 .orElse(null);
 
-        // service counts
         Map<String, Long> serviceCounts = logs.stream()
                 .map(LogEntryDto::getApiService)
                 .filter(Objects::nonNull)
@@ -48,7 +59,6 @@ public class LogAnalysisService {
                 .limit(3)
                 .collect(Collectors.toList());
 
-        // browser ratio
         Map<String, Long> browserCounts = logs.stream()
                 .map(LogEntryDto::getBrowser)
                 .filter(Objects::nonNull)
@@ -57,15 +67,18 @@ public class LogAnalysisService {
         long totalBrowser = browserCounts.values().stream().mapToLong(Long::longValue).sum();
         Map<String, Double> browserRatio = new LinkedHashMap<>();
         if (totalBrowser > 0) {
-            browserCounts.forEach((b, c) -> browserRatio.put(b, (c * 100.0) / totalBrowser));
+            browserCounts.forEach((browser, count) -> browserRatio.put(browser, (count * 100.0) / totalBrowser));
         }
 
-        AnalysisResultDto dto = new AnalysisResultDto(mostCalledApiKey, top3Services, browserRatio);
-        writeResultFile(dto);
-        return dto;
+        return new AnalysisResultDto(mostCalledApiKey, top3Services, browserRatio);
     }
 
-    private void writeResultFile(AnalysisResultDto dto) {
+    private Path createOutputPath() {
+        String fileName = "kokoa-result-" + System.currentTimeMillis() + "-" + UUID.randomUUID() + ".txt";
+        return OUTPUT_DIR.resolve(fileName);
+    }
+
+    private void writeResultFile(AnalysisResultDto dto, Path output) {
         List<String> lines = new ArrayList<>();
         lines.add("Most called APIKEY: " + (dto.getMostCalledApiKey() == null ? "NONE" : dto.getMostCalledApiKey()));
         lines.add("");
@@ -79,15 +92,10 @@ public class LogAnalysisService {
         dto.getBrowserRatio().forEach((k, v) -> lines.add(String.format("%s: %.2f%%", k, v)));
 
         try {
-            // OUTPUT의 부모 폴더가 없으면 생성
-            Files.createDirectories(OUTPUT.getParent());
-            Files.write(OUTPUT, lines, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
+            Files.createDirectories(OUTPUT_DIR);
+            Files.write(output, lines, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
         } catch (IOException e) {
             throw new RuntimeException("Failed to write result file", e);
         }
-    }
-
-    public Path getResultPath() {
-        return OUTPUT;
     }
 }
