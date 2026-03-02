@@ -45,7 +45,8 @@ public class LogAnalysisService {
                 .collect(Collectors.groupingBy(k -> k, Collectors.counting()));
 
         String mostCalledApiKey = apiKeyCounts.entrySet().stream()
-                .max(Map.Entry.comparingByValue())
+                .max(Map.Entry.<String, Long>comparingByValue()
+                        .thenComparing(Map.Entry.comparingByKey(Comparator.reverseOrder())))
                 .map(Map.Entry::getKey)
                 .orElse(null);
 
@@ -55,7 +56,8 @@ public class LogAnalysisService {
                 .collect(Collectors.groupingBy(s -> s, Collectors.counting()));
 
         List<Map.Entry<String, Long>> top3Services = serviceCounts.entrySet().stream()
-                .sorted(Map.Entry.<String, Long>comparingByValue().reversed())
+                .sorted(Map.Entry.<String, Long>comparingByValue().reversed()
+                        .thenComparing(Map.Entry.comparingByKey()))
                 .limit(3)
                 .collect(Collectors.toList());
 
@@ -67,7 +69,9 @@ public class LogAnalysisService {
         long totalBrowser = browserCounts.values().stream().mapToLong(Long::longValue).sum();
         Map<String, Double> browserRatio = new LinkedHashMap<>();
         if (totalBrowser > 0) {
-            browserCounts.forEach((browser, count) -> browserRatio.put(browser, (count * 100.0) / totalBrowser));
+            browserCounts.entrySet().stream()
+                    .sorted(Map.Entry.comparingByKey())
+                    .forEach(entry -> browserRatio.put(entry.getKey(), (entry.getValue() * 100.0) / totalBrowser));
         }
 
         return new AnalysisResultDto(mostCalledApiKey, top3Services, browserRatio);
