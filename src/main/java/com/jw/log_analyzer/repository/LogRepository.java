@@ -18,7 +18,7 @@ import java.util.regex.Pattern;
 public class LogRepository {
 
     private static final Pattern LINE_PATTERN = Pattern.compile("\\[(\\d+)]\\[(.*?)\\]\\[(.*?)\\]\\[(.*?)\\]");
-    private static final Pattern APIKEY_PATTERN = Pattern.compile("apikey=([A-Za-z0-9]{4})");
+    private static final Pattern APIKEY_PATTERN = Pattern.compile("[?&]apikey=([A-Za-z0-9]{4})(?:&|$)");
     private static final DateTimeFormatter DATE_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
     public List<LogEntryDto> readAllLogs() {
