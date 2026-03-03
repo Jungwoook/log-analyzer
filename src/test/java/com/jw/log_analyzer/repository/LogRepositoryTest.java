@@ -20,4 +20,17 @@ class LogRepositoryTest {
                 .extracting(LogEntryDto::getApiKey)
                 .containsOnlyNulls();
     }
+
+    @Test
+    void readAllLogsSupportsJsonLineFormat() {
+        LogRepository repository = new LogRepository();
+
+        List<LogEntryDto> logs = repository.readAllLogs("logs/maver.log");
+
+        assertThat(logs).hasSize(6);
+        assertThat(logs.get(0).getApiService()).isEqualTo("news");
+        assertThat(logs.get(0).getApiKey()).isEqualTo("a1b2");
+        assertThat(logs.get(0).getBrowser()).isEqualTo("Chrome");
+        assertThat(logs.get(4).getApiService()).isNull();
+    }
 }

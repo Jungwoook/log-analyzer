@@ -1,5 +1,7 @@
 package com.jw.log_analyzer.repository;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jw.log_analyzer.dto.LogEntryDto;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Repository;
@@ -7,7 +9,9 @@ import org.springframework.stereotype.Repository;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
@@ -21,24 +25,24 @@ public class LogRepository {
     private static final Pattern APIKEY_PATTERN = Pattern.compile("[?&]apikey=([A-Za-z0-9]{4})(?:&|$)");
     private static final DateTimeFormatter DATE_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
+    private static final String DEFAULT_LOG_RESOURCE = "logs/kokoa.txt";
+
+    private final ObjectMapper objectMapper = new ObjectMapper();
+
     public List<LogEntryDto> readAllLogs() {
+        return readAllLogs(DEFAULT_LOG_RESOURCE);
+    }
+
+    public List<LogEntryDto> readAllLogs(String resourcePath) {
         List<LogEntryDto> result = new ArrayList<>();
-        try (BufferedReader br = new BufferedReader(new InputStreamReader(new ClassPathResource("logs/kokoa.txt").getInputStream(), StandardCharsets.UTF_8))) {
+        try (BufferedReader br = new BufferedReader(new InputStreamReader(new ClassPathResource(resourcePath).getInputStream(), StandardCharsets.UTF_8))) {
             String line;
             while ((line = br.readLine()) != null) {
                 try {
-                    Matcher m = LINE_PATTERN.matcher(line);
-                    if (!m.find()) continue;
-                    int status = Integer.parseInt(m.group(1));
-                    String url = m.group(2);
-                    String browser = m.group(3);
-                    String timeStr = m.group(4);
-                    LocalDateTime ts = LocalDateTime.parse(timeStr, DATE_FORMAT);
-
-                    String apiService = extractServiceId(url);
-                    String apiKey = extractApiKey(url);
-
-                    result.add(new LogEntryDto(status, url, apiService, apiKey, browser, ts));
+                    LogEntryDto parsed = parseLine(line);
+                    if (parsed != null) {
+                        result.add(parsed);
+                    }
                 } catch (RuntimeException ignored) {
                     // Ignore malformed lines and continue processing the rest.
                 }
@@ -49,28 +53,83 @@ public class LogRepository {
         return result;
     }
 
-    private String extractServiceId(String url) {
-        // get segment after /search/ until '?' or end
+    private LogEntryDto parseLine(String line) {
+        String trimmed = line.trim();
+        if (trimmed.isEmpty()) {
+            return null;
+        }
+
+        if (trimmed.startsWith("{")) {
+            return parseJsonLine(trimmed);
+        }
+        return parseBracketLine(trimmed);
+    }
+
+    private LogEntryDto parseBracketLine(String line) {
+        Matcher m = LINE_PATTERN.matcher(line);
+        if (!m.find()) {
+            return null;
+        }
+
+        int status = Integer.parseInt(m.group(1));
+        String url = m.group(2);
+        String browser = m.group(3);
+        String timeStr = m.group(4);
+        LocalDateTime ts = LocalDateTime.parse(timeStr, DATE_FORMAT);
+
+        String apiService = extractServiceIdFromUrl(url);
+        String apiKey = extractApiKeyFromUrl(url);
+        return new LogEntryDto(status, url, apiService, apiKey, browser, ts);
+    }
+
+    private LogEntryDto parseJsonLine(String line) {
+        try {
+            JsonNode node = objectMapper.readTree(line);
+            int status = node.path("status_code").asInt();
+            String url = node.path("url").asText(null);
+            String browser = node.path("browser").asText(null);
+            String serviceId = normalizeServiceId(node.path("service_id").asText(null));
+            String apiKey = node.path("api_key").asText(null);
+            String timestamp = node.path("@timestamp").asText(null);
+
+            if (timestamp == null || url == null) {
+                return null;
+            }
+
+            LocalDateTime ts = LocalDateTime.ofInstant(Instant.parse(timestamp), ZoneOffset.UTC);
+            return new LogEntryDto(status, url, serviceId, apiKey, browser, ts);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private String extractServiceIdFromUrl(String url) {
         int idx = url.indexOf("/search/");
         if (idx < 0) return null;
         int start = idx + "/search/".length();
         int q = url.indexOf('?', start);
         String seg = q >= 0 ? url.substring(start, q) : url.substring(start);
-        // only accept known services
-        switch (seg) {
+        return normalizeServiceId(seg);
+    }
+
+    private String normalizeServiceId(String serviceId) {
+        if (serviceId == null) {
+            return null;
+        }
+        switch (serviceId) {
             case "blog":
             case "book":
             case "image":
             case "knowledge":
             case "news":
             case "vclip":
-                return seg;
+                return serviceId;
             default:
                 return null;
         }
     }
 
-    private String extractApiKey(String url) {
+    private String extractApiKeyFromUrl(String url) {
         Matcher m = APIKEY_PATTERN.matcher(url);
         if (m.find()) return m.group(1);
         return null;

@@ -16,6 +16,8 @@ import java.util.stream.Collectors;
 public class LogAnalysisService {
 
     private static final Path OUTPUT_DIR = Path.of("logs");
+    private static final String DEFAULT_LOG_RESOURCE = "logs/kokoa.txt";
+    private static final String DEFAULT_OUTPUT_PREFIX = "kokoa-result-";
     private final LogRepository repository;
 
     public LogAnalysisService(LogRepository repository) {
@@ -23,22 +25,29 @@ public class LogAnalysisService {
     }
 
     public AnalysisResultDto analyzeAndWrite() {
-        AnalysisResultDto dto = analyze();
-        Path output = createOutputPath();
+        AnalysisResultDto dto = analyze(DEFAULT_LOG_RESOURCE);
+        Path output = createOutputPath(DEFAULT_OUTPUT_PREFIX);
         writeResultFile(dto, output);
         return dto;
     }
 
     public Path analyzeAndWriteToFile() {
-        AnalysisResultDto dto = analyze();
-        Path output = createOutputPath();
+        return analyzeAndWriteToFile(DEFAULT_LOG_RESOURCE, DEFAULT_OUTPUT_PREFIX);
+    }
+
+    public Path analyzeAndWriteToFile(String logResourcePath, String outputPrefix) {
+        AnalysisResultDto dto = analyze(logResourcePath);
+        Path output = createOutputPath(outputPrefix);
         writeResultFile(dto, output);
         return output;
     }
 
-    private AnalysisResultDto analyze() {
-        List<LogEntryDto> logs = repository.readAllLogs();
+    public AnalysisResultDto analyze(String logResourcePath) {
+        List<LogEntryDto> logs = repository.readAllLogs(logResourcePath);
+        return analyze(logs);
+    }
 
+    private AnalysisResultDto analyze(List<LogEntryDto> logs) {
         Map<String, Long> apiKeyCounts = logs.stream()
                 .map(LogEntryDto::getApiKey)
                 .filter(Objects::nonNull)
@@ -77,8 +86,8 @@ public class LogAnalysisService {
         return new AnalysisResultDto(mostCalledApiKey, top3Services, browserRatio);
     }
 
-    private Path createOutputPath() {
-        String fileName = "kokoa-result-" + System.currentTimeMillis() + "-" + UUID.randomUUID() + ".txt";
+    private Path createOutputPath(String outputPrefix) {
+        String fileName = outputPrefix + System.currentTimeMillis() + "-" + UUID.randomUUID() + ".txt";
         return OUTPUT_DIR.resolve(fileName);
     }
 
