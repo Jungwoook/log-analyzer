@@ -164,7 +164,6 @@ public AnalysisResultDto analyzeAndWrite() {
 - Framework: Spring Boot 3.5
 - Build Tool: Gradle
 - Architecture: Layered Architecture
-- Test: JUnit 5, Mockito, AssertJ
 
 ## 11. 프로젝트 구조
 
