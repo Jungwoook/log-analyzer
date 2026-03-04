@@ -50,7 +50,7 @@ public class LogAnalysisService {
     private AnalysisResultDto analyze(List<LogEntryDto> logs) {
         Map<String, Long> apiKeyCounts = logs.stream()
                 .map(LogEntryDto::getApiKey)
-                .filter(Objects::nonNull)
+                .filter(this::hasText)
                 .collect(Collectors.groupingBy(k -> k, Collectors.counting()));
 
         String mostCalledApiKey = apiKeyCounts.entrySet().stream()
@@ -60,8 +60,8 @@ public class LogAnalysisService {
                 .orElse(null);
 
         Map<String, Long> serviceCounts = logs.stream()
-                .map(LogEntryDto::getApiService)
-                .filter(Objects::nonNull)
+                .map(LogEntryDto::getServiceId)
+                .filter(this::hasText)
                 .collect(Collectors.groupingBy(s -> s, Collectors.counting()));
 
         List<Map.Entry<String, Long>> top3Services = serviceCounts.entrySet().stream()
@@ -72,7 +72,7 @@ public class LogAnalysisService {
 
         Map<String, Long> browserCounts = logs.stream()
                 .map(LogEntryDto::getBrowser)
-                .filter(Objects::nonNull)
+                .filter(this::hasText)
                 .collect(Collectors.groupingBy(b -> b, Collectors.counting()));
 
         long totalBrowser = browserCounts.values().stream().mapToLong(Long::longValue).sum();
@@ -110,5 +110,9 @@ public class LogAnalysisService {
         } catch (IOException e) {
             throw new RuntimeException("Failed to write result file", e);
         }
+    }
+
+    private boolean hasText(String value) {
+        return value != null && !value.isBlank();
     }
 }

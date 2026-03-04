@@ -76,10 +76,10 @@ public class LogRepository {
         String browser = m.group(3);
         String timeStr = m.group(4);
         LocalDateTime ts = LocalDateTime.parse(timeStr, DATE_FORMAT);
-
-        String apiService = extractServiceIdFromUrl(url);
+        
+        String serviceId = extractServiceIdFromUrl(url);
         String apiKey = extractApiKeyFromUrl(url);
-        return new LogEntryDto(status, url, apiService, apiKey, browser, ts);
+        return new LogEntryDto(status, url, serviceId, apiKey, browser, ts);
     }
 
     private LogEntryDto parseJsonLine(String line) {
@@ -87,13 +87,17 @@ public class LogRepository {
             JsonNode node = objectMapper.readTree(line);
             int status = node.path("status_code").asInt();
             String url = node.path("url").asText(null);
-            String browser = node.path("browser").asText(null);
-            String serviceId = normalizeServiceId(node.path("service_id").asText(null));
-            String apiKey = node.path("api_key").asText(null);
+            String browser = sanitizeText(node.path("browser").asText(null));
+            String serviceId = sanitizeText(node.path("service_id").asText(null));
+            String apiKey = sanitizeText(node.path("api_key").asText(null));
             String timestamp = node.path("@timestamp").asText(null);
 
             if (timestamp == null || url == null) {
                 return null;
+            }
+
+            if (serviceId == null) {
+                serviceId = extractServiceIdFromUrl(url);
             }
 
             LocalDateTime ts = LocalDateTime.ofInstant(Instant.parse(timestamp), ZoneOffset.UTC);
@@ -104,12 +108,22 @@ public class LogRepository {
     }
 
     private String extractServiceIdFromUrl(String url) {
-        int idx = url.indexOf("/search/");
-        if (idx < 0) return null;
-        int start = idx + "/search/".length();
+        String serviceId = extractSegment(url, "/search/");
+        if (serviceId != null) {
+            return normalizeServiceId(serviceId);
+        }
+        return extractSegment(url, "/v1/");
+    }
+
+    private String extractSegment(String url, String marker) {
+        int idx = url.indexOf(marker);
+        if (idx < 0) {
+            return null;
+        }
+
+        int start = idx + marker.length();
         int q = url.indexOf('?', start);
-        String seg = q >= 0 ? url.substring(start, q) : url.substring(start);
-        return normalizeServiceId(seg);
+        return sanitizeText(q >= 0 ? url.substring(start, q) : url.substring(start));
     }
 
     private String normalizeServiceId(String serviceId) {
@@ -133,5 +147,14 @@ public class LogRepository {
         Matcher m = APIKEY_PATTERN.matcher(url);
         if (m.find()) return m.group(1);
         return null;
+    }
+
+    private String sanitizeText(String value) {
+        if (value == null) {
+            return null;
+        }
+
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
     }
 }
