@@ -7,6 +7,8 @@ import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Repository;
 
 import java.io.BufferedReader;
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
@@ -15,8 +17,11 @@ import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 @Repository
 public class LogRepository {
@@ -34,23 +39,30 @@ public class LogRepository {
     }
 
     public List<LogEntryDto> readAllLogs(String resourcePath) {
-        List<LogEntryDto> result = new ArrayList<>();
-        try (BufferedReader br = new BufferedReader(new InputStreamReader(new ClassPathResource(resourcePath).getInputStream(), StandardCharsets.UTF_8))) {
-            String line;
-            while ((line = br.readLine()) != null) {
-                try {
-                    LogEntryDto parsed = parseLine(line);
-                    if (parsed != null) {
-                        result.add(parsed);
-                    }
-                } catch (RuntimeException ignored) {
-                    // Ignore malformed lines and continue processing the rest.
-                }
-            }
+        try (Stream<LogEntryDto> logs = streamLogs(resourcePath)) {
+            return logs.collect(Collectors.toCollection(ArrayList::new));
+        }
+    }
+
+    public Stream<LogEntryDto> streamLogs() {
+        return streamLogs(DEFAULT_LOG_RESOURCE);
+    }
+
+    public Stream<LogEntryDto> streamLogs(String resourcePath) {
+        final BufferedReader reader;
+        try {
+            reader = new BufferedReader(new InputStreamReader(
+                    new ClassPathResource(resourcePath).getInputStream(),
+                    StandardCharsets.UTF_8
+            ));
         } catch (Exception e) {
             throw new RuntimeException("Failed to read logs", e);
         }
-        return result;
+
+        return reader.lines()
+                .map(this::safeParseLine)
+                .filter(Objects::nonNull)
+                .onClose(() -> closeQuietly(reader));
     }
 
     private LogEntryDto parseLine(String line) {
@@ -63,6 +75,23 @@ public class LogRepository {
             return parseJsonLine(trimmed);
         }
         return parseBracketLine(trimmed);
+    }
+
+    private LogEntryDto safeParseLine(String line) {
+        try {
+            return parseLine(line);
+        } catch (RuntimeException ignored) {
+            // Ignore malformed lines and continue processing the rest.
+            return null;
+        }
+    }
+
+    private void closeQuietly(BufferedReader reader) {
+        try {
+            reader.close();
+        } catch (IOException e) {
+            throw new UncheckedIOException("Failed to close log reader", e);
+        }
     }
 
     private LogEntryDto parseBracketLine(String line) {
