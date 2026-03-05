@@ -2,6 +2,7 @@ package com.jw.log_analyzer.controller;
 
 import com.jw.log_analyzer.service.LogAnalysisService;
 import org.springframework.core.io.FileSystemResource;
+import org.springframework.core.io.Resource;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -24,16 +25,16 @@ public class LogAnalysisController {
     }
 
     @GetMapping("/api/analyze")
-    public ResponseEntity<FileSystemResource> analyzeKokoa() {
+    public ResponseEntity<Resource> analyzeKokoa() {
         return buildDownloadResponse(service.analyzeAndWriteToFile());
     }
 
     @GetMapping("/api/analyze/maver")
-    public ResponseEntity<FileSystemResource> analyzeMaver() {
+    public ResponseEntity<Resource> analyzeMaver() {
         return buildDownloadResponse(service.analyzeAndWriteToFile(MAVER_LOG_RESOURCE, MAVER_OUTPUT_PREFIX));
     }
 
-    private ResponseEntity<FileSystemResource> buildDownloadResponse(Path outputPath) {
+    private ResponseEntity<Resource> buildDownloadResponse(Path outputPath) {
         if (!outputPath.toFile().exists()) {
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).build();
         }
