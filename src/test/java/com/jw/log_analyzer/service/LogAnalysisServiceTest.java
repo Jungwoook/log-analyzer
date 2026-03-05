@@ -6,10 +6,11 @@ import com.jw.log_analyzer.repository.LogRepository;
 import org.junit.jupiter.api.Test;
 
 import java.time.LocalDateTime;
-import java.util.List;
 import java.util.Map;
+import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -18,7 +19,7 @@ class LogAnalysisServiceTest {
     @Test
     void analyzeAndWriteChoosesLexicographicallySmallestOnCountTie() {
         LogRepository repository = mock(LogRepository.class);
-        when(repository.readAllLogs()).thenReturn(List.of(
+        when(repository.streamLogs(anyString())).thenReturn(Stream.of(
                 entry("beta", "news", "Chrome"),
                 entry("beta", "news", "Chrome"),
                 entry("alpha", "book", "Firefox"),

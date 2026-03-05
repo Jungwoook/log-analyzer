@@ -10,7 +10,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.*;
-import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 @Service
 public class LogAnalysisService {
@@ -43,15 +43,27 @@ public class LogAnalysisService {
     }
 
     public AnalysisResultDto analyze(String logResourcePath) {
-        List<LogEntryDto> logs = repository.readAllLogs(logResourcePath);
-        return analyze(logs);
-    }
+        Map<String, Long> apiKeyCounts = new HashMap<>();
+        Map<String, Long> serviceCounts = new HashMap<>();
+        Map<String, Long> browserCounts = new HashMap<>();
+        long totalBrowser = 0L;
 
-    private AnalysisResultDto analyze(List<LogEntryDto> logs) {
-        Map<String, Long> apiKeyCounts = logs.stream()
-                .map(LogEntryDto::getApiKey)
-                .filter(this::hasText)
-                .collect(Collectors.groupingBy(k -> k, Collectors.counting()));
+        try (Stream<LogEntryDto> logs = repository.streamLogs(logResourcePath)) {
+            Iterator<LogEntryDto> iterator = logs.iterator();
+            while (iterator.hasNext()) {
+                LogEntryDto log = iterator.next();
+                if (hasText(log.getApiKey())) {
+                    apiKeyCounts.merge(log.getApiKey(), 1L, Long::sum);
+                }
+                if (hasText(log.getServiceId())) {
+                    serviceCounts.merge(log.getServiceId(), 1L, Long::sum);
+                }
+                if (hasText(log.getBrowser())) {
+                    browserCounts.merge(log.getBrowser(), 1L, Long::sum);
+                    totalBrowser++;
+                }
+            }
+        }
 
         String mostCalledApiKey = apiKeyCounts.entrySet().stream()
                 .max(Map.Entry.<String, Long>comparingByValue()
@@ -59,28 +71,18 @@ public class LogAnalysisService {
                 .map(Map.Entry::getKey)
                 .orElse(null);
 
-        Map<String, Long> serviceCounts = logs.stream()
-                .map(LogEntryDto::getServiceId)
-                .filter(this::hasText)
-                .collect(Collectors.groupingBy(s -> s, Collectors.counting()));
-
         List<Map.Entry<String, Long>> top3Services = serviceCounts.entrySet().stream()
                 .sorted(Map.Entry.<String, Long>comparingByValue().reversed()
                         .thenComparing(Map.Entry.comparingByKey()))
                 .limit(3)
-                .collect(Collectors.toList());
+                .toList();
 
-        Map<String, Long> browserCounts = logs.stream()
-                .map(LogEntryDto::getBrowser)
-                .filter(this::hasText)
-                .collect(Collectors.groupingBy(b -> b, Collectors.counting()));
-
-        long totalBrowser = browserCounts.values().stream().mapToLong(Long::longValue).sum();
         Map<String, Double> browserRatio = new LinkedHashMap<>();
         if (totalBrowser > 0) {
+            final long totalBrowserCount = totalBrowser;
             browserCounts.entrySet().stream()
                     .sorted(Map.Entry.comparingByKey())
-                    .forEach(entry -> browserRatio.put(entry.getKey(), (entry.getValue() * 100.0) / totalBrowser));
+                    .forEach(entry -> browserRatio.put(entry.getKey(), (entry.getValue() * 100.0) / totalBrowserCount));
         }
 
         return new AnalysisResultDto(mostCalledApiKey, top3Services, browserRatio);
