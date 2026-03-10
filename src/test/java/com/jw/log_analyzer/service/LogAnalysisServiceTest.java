@@ -1,12 +1,12 @@
 package com.jw.log_analyzer.service;
 
 import com.jw.log_analyzer.dto.AnalysisResultDto;
+import com.jw.log_analyzer.dto.AnalysisResultDto.TopServiceDto;
 import com.jw.log_analyzer.dto.LogEntryDto;
 import com.jw.log_analyzer.repository.LogRepository;
 import org.junit.jupiter.api.Test;
 
 import java.time.LocalDateTime;
-import java.util.Map;
 import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -17,7 +17,7 @@ import static org.mockito.Mockito.when;
 class LogAnalysisServiceTest {
 
     @Test
-    void analyzeAndWriteChoosesLexicographicallySmallestOnCountTie() {
+    void analyzeChoosesLexicographicallySmallestOnCountTie() {
         LogRepository repository = mock(LogRepository.class);
         when(repository.streamLogs(anyString())).thenReturn(Stream.of(
                 entry("beta", "news", "Chrome"),
@@ -28,11 +28,11 @@ class LogAnalysisServiceTest {
 
         LogAnalysisService service = new LogAnalysisService(repository);
 
-        AnalysisResultDto result = service.analyzeAndWrite();
+        AnalysisResultDto result = service.analyze();
 
         assertThat(result.getMostCalledApiKey()).isEqualTo("alpha");
         assertThat(result.getTop3Services())
-                .containsExactly(Map.entry("book", 2L), Map.entry("news", 2L));
+                .containsExactly(new TopServiceDto("book", 2L), new TopServiceDto("news", 2L));
         assertThat(result.getBrowserRatio().keySet())
                 .containsExactly("Chrome", "Firefox");
     }
