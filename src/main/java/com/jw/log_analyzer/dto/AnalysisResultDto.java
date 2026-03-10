@@ -1,20 +1,22 @@
 package com.jw.log_analyzer.dto;
 
 import java.util.List;
-import java.util.Map;
 
 public class AnalysisResultDto {
     private final String mostCalledApiKey;
-    private final List<Map.Entry<String, Long>> top3Services;
-    private final Map<String, Double> browserRatio;
+    private final List<TopServiceDto> top3Services;
+    private final java.util.Map<String, Double> browserRatio;
 
-    public AnalysisResultDto(String mostCalledApiKey, List<Map.Entry<String, Long>> top3Services, Map<String, Double> browserRatio) {
+    public AnalysisResultDto(String mostCalledApiKey, List<TopServiceDto> top3Services, java.util.Map<String, Double> browserRatio) {
         this.mostCalledApiKey = mostCalledApiKey;
         this.top3Services = top3Services;
         this.browserRatio = browserRatio;
     }
 
     public String getMostCalledApiKey() { return mostCalledApiKey; }
-    public List<Map.Entry<String, Long>> getTop3Services() { return top3Services; }
-    public Map<String, Double> getBrowserRatio() { return browserRatio; }
+    public List<TopServiceDto> getTop3Services() { return top3Services; }
+    public java.util.Map<String, Double> getBrowserRatio() { return browserRatio; }
+
+    public record TopServiceDto(String serviceId, long count) {
+    }
 }

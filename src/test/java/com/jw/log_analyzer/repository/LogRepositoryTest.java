@@ -27,10 +27,12 @@ class LogRepositoryTest {
 
         List<LogEntryDto> logs = repository.readAllLogs("logs/maver.log");
 
-        assertThat(logs).hasSize(6);
-        assertThat(logs.get(0).getServiceId()).isEqualTo("news");
-        assertThat(logs.get(0).getApiKey()).isEqualTo("a1b2");
-        assertThat(logs.get(0).getBrowser()).isEqualTo("Chrome");
-        assertThat(logs.get(4).getServiceId()).isNull();
+        assertThat(logs).hasSize(100);
+        assertThat(logs.get(0).getServiceId()).isEqualTo("weather");
+        assertThat(logs.get(0).getApiKey()).isEqualTo("a1b2c3");
+        assertThat(logs.get(0).getBrowser()).isNull();
+        assertThat(logs)
+                .extracting(LogEntryDto::getServiceId)
+                .contains("weather", "stock", "news", "map", "invalid", "beta");
     }
 }
