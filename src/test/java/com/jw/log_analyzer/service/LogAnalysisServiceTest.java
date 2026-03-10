@@ -5,12 +5,13 @@ import com.jw.log_analyzer.dto.AnalysisResultDto.TopServiceDto;
 import com.jw.log_analyzer.dto.LogEntryDto;
 import com.jw.log_analyzer.repository.LogRepository;
 import org.junit.jupiter.api.Test;
+import org.springframework.mock.web.MockMultipartFile;
 
 import java.time.LocalDateTime;
 import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -19,7 +20,8 @@ class LogAnalysisServiceTest {
     @Test
     void analyzeChoosesLexicographicallySmallestOnCountTie() {
         LogRepository repository = mock(LogRepository.class);
-        when(repository.streamLogs(anyString())).thenReturn(Stream.of(
+        MockMultipartFile file = new MockMultipartFile("file", "upload.log", "text/plain", new byte[0]);
+        when(repository.streamLogs(any())).thenReturn(Stream.of(
                 entry("beta", "news", "Chrome"),
                 entry("beta", "news", "Chrome"),
                 entry("alpha", "book", "Firefox"),
@@ -28,7 +30,7 @@ class LogAnalysisServiceTest {
 
         LogAnalysisService service = new LogAnalysisService(repository);
 
-        AnalysisResultDto result = service.analyze();
+        AnalysisResultDto result = service.analyze(file);
 
         assertThat(result.getMostCalledApiKey()).isEqualTo("alpha");
         assertThat(result.getTop3Services())
