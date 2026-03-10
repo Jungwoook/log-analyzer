@@ -5,6 +5,7 @@ import com.jw.log_analyzer.dto.AnalysisResultDto.TopServiceDto;
 import com.jw.log_analyzer.dto.LogEntryDto;
 import com.jw.log_analyzer.repository.LogRepository;
 import org.springframework.stereotype.Service;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.util.*;
 import java.util.stream.Stream;
@@ -12,24 +13,19 @@ import java.util.stream.Stream;
 @Service
 public class LogAnalysisService {
 
-    private static final String DEFAULT_LOG_RESOURCE = "logs/kokoa.txt";
     private final LogRepository repository;
 
     public LogAnalysisService(LogRepository repository) {
         this.repository = repository;
     }
 
-    public AnalysisResultDto analyze() {
-        return analyze(DEFAULT_LOG_RESOURCE);
-    }
-
-    public AnalysisResultDto analyze(String logResourcePath) {
+    public AnalysisResultDto analyze(MultipartFile file) {
         Map<String, Long> apiKeyCounts = new HashMap<>();
         Map<String, Long> serviceCounts = new HashMap<>();
         Map<String, Long> browserCounts = new HashMap<>();
         long totalBrowser = 0L;
 
-        try (Stream<LogEntryDto> logs = repository.streamLogs(logResourcePath)) {
+        try (Stream<LogEntryDto> logs = repository.streamLogs(file)) {
             Iterator<LogEntryDto> iterator = logs.iterator();
             while (iterator.hasNext()) {
                 LogEntryDto log = iterator.next();

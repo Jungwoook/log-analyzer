@@ -3,11 +3,12 @@ package com.jw.log_analyzer.repository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jw.log_analyzer.dto.LogEntryDto;
-import org.springframework.core.io.ClassPathResource;
 import org.springframework.stereotype.Repository;
+import org.springframework.web.multipart.MultipartFile;
 
 import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
@@ -30,32 +31,20 @@ public class LogRepository {
     private static final Pattern APIKEY_PATTERN = Pattern.compile("[?&]apikey=([A-Za-z0-9]{4})(?:&|$)");
     private static final DateTimeFormatter DATE_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
-    private static final String DEFAULT_LOG_RESOURCE = "logs/kokoa.txt";
-
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    public List<LogEntryDto> readAllLogs() {
-        return readAllLogs(DEFAULT_LOG_RESOURCE);
-    }
-
-    public List<LogEntryDto> readAllLogs(String resourcePath) {
-        try (Stream<LogEntryDto> logs = streamLogs(resourcePath)) {
+    public List<LogEntryDto> readAllLogs(MultipartFile file) {
+        try (Stream<LogEntryDto> logs = streamLogs(file)) {
             return logs.collect(Collectors.toCollection(ArrayList::new));
         }
     }
 
-    public Stream<LogEntryDto> streamLogs() {
-        return streamLogs(DEFAULT_LOG_RESOURCE);
-    }
-
-    public Stream<LogEntryDto> streamLogs(String resourcePath) {
+    public Stream<LogEntryDto> streamLogs(MultipartFile file) {
         final BufferedReader reader;
         try {
-            reader = new BufferedReader(new InputStreamReader(
-                    new ClassPathResource(resourcePath).getInputStream(),
-                    StandardCharsets.UTF_8
-            ));
-        } catch (Exception e) {
+            InputStream inputStream = file.getInputStream();
+            reader = new BufferedReader(new InputStreamReader(inputStream, StandardCharsets.UTF_8));
+        } catch (IOException e) {
             throw new RuntimeException("Failed to read logs", e);
         }
 
