@@ -3,6 +3,8 @@ package com.jw.log_analyzer.repository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jw.log_analyzer.dto.LogEntryDto;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Repository;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -19,6 +21,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -27,6 +30,7 @@ import java.util.stream.Stream;
 @Repository
 public class LogRepository {
 
+    private static final Logger log = LoggerFactory.getLogger(LogRepository.class);
     private static final Pattern LINE_PATTERN = Pattern.compile("\\[(\\d+)]\\[(.*?)\\]\\[(.*?)\\]\\[(.*?)\\]");
     private static final Pattern APIKEY_PATTERN = Pattern.compile("[?&]apikey=([A-Za-z0-9]{4})(?:&|$)");
     private static final DateTimeFormatter DATE_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
@@ -47,9 +51,10 @@ public class LogRepository {
         } catch (IOException e) {
             throw new RuntimeException("Failed to read logs", e);
         }
+        AtomicLong lineNumber = new AtomicLong(0);
 
         return reader.lines()
-                .map(this::safeParseLine)
+                .map(line -> safeParseLine(line, lineNumber.incrementAndGet()))
                 .filter(Objects::nonNull)
                 .onClose(() -> closeQuietly(reader));
     }
@@ -66,11 +71,11 @@ public class LogRepository {
         return parseBracketLine(trimmed);
     }
 
-    private LogEntryDto safeParseLine(String line) {
+    private LogEntryDto safeParseLine(String line, long lineNumber) {
         try {
             return parseLine(line);
-        } catch (RuntimeException ignored) {
-            // Ignore malformed lines and continue processing the rest.
+        } catch (RuntimeException e) {
+            log.warn("Failed to parse log line. lineNumber={}, error={}", lineNumber, e.getMessage());
             return null;
         }
     }
@@ -86,7 +91,7 @@ public class LogRepository {
     private LogEntryDto parseBracketLine(String line) {
         Matcher m = LINE_PATTERN.matcher(line);
         if (!m.find()) {
-            return null;
+            throw new IllegalArgumentException("Unsupported bracket log format");
         }
 
         int status = Integer.parseInt(m.group(1));
@@ -111,7 +116,7 @@ public class LogRepository {
             String timestamp = node.path("@timestamp").asText(null);
 
             if (timestamp == null || url == null) {
-                return null;
+                throw new IllegalArgumentException("Missing required JSON fields");
             }
 
             if (serviceId == null) {
@@ -121,7 +126,7 @@ public class LogRepository {
             LocalDateTime ts = LocalDateTime.ofInstant(Instant.parse(timestamp), ZoneOffset.UTC);
             return new LogEntryDto(status, url, serviceId, apiKey, browser, ts);
         } catch (Exception e) {
-            return null;
+            throw new IllegalArgumentException("Invalid JSON log format: " + e.getMessage(), e);
         }
     }
 
