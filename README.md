@@ -29,7 +29,7 @@ Client
 ### 파싱 전략
 
 ```java
-private static final Pattern APIKEY_PATTERN = 
+private static final Pattern APIKEY_PATTERN =
     Pattern.compile("[?&]apikey=([A-Za-z0-9]{4})(?:&|$)");
 ```
 
@@ -101,7 +101,7 @@ Map<String, Long> browserCounts = logEntries.stream()
 
 ```java
 .sorted(Map.Entry.comparingByKey())
-.forEach(entry -> browserRatio.put(entry.getKey(), 
+.forEach(entry -> browserRatio.put(entry.getKey(),
     (entry.getValue() * 100.0) / totalBrowser));
 ```
 
@@ -111,24 +111,43 @@ LinkedHashMap으로 삽입 순서 유지하여 일관된 결과 제공
 
 | 계층 | 책임 |
 |------|------|
-| **Controller** | HTTP 요청/응답 처리, 파일 다운로드 |
-| **Service** | 비즈니스 로직, 분석 계산, 결과 파일 생성 |
-| **Repository** | 로그 파일 읽기, 파싱 (2가지 형식 자동 감지) |
+| **Controller** | HTTP 요청/응답 처리, 업로드 파일 수신, 요청 시작 로그 기록 |
+| **Service** | 비즈니스 로직, 분석 계산, 단계별 진행 로그 기록, 처리 시간 측정 |
+| **Repository** | 업로드 로그 파일 읽기, 파싱 (2가지 형식 자동 감지), 라인 파싱 실패 warn 로그 기록 |
 | **DTO** | 데이터 전달, 타입 안전성 확보 |
 
 ## 7. API 엔드포인트
 
-### 기본 분석 (Kokoa)
-- **요청**: `GET /api/analyze`
-- **입력**: `logs/kokoa.txt` (브래킷 형식)
-- **응답**: 분석 결과 텍스트 파일 다운로드
-- **파일명**: `kokoa-result-{timestamp}.txt`
+### 로그 분석
+- **요청**: `POST /api/analyze`
+- **Content-Type**: `multipart/form-data`
+- **입력**: `file` 파트로 로그 파일 업로드
+- **응답**: 분석 결과 JSON
 
-### JSON Lines 분석 (Maver)
-- **요청**: `GET /api/analyze/maver`
-- **입력**: `logs/maver.log` (JSON Lines 형식)
-- **응답**: 분석 결과 텍스트 파일 다운로드
-- **파일명**: `maver-result-{timestamp}.txt`
+예시:
+
+```bash
+curl -X POST "http://localhost:8080/api/analyze" \
+  -F "file=@./sample.log"
+```
+
+응답 예시:
+
+```json
+{
+  "mostCalledApiKey": "a1b2",
+  "top3Services": [
+    { "serviceId": "news", "count": 120 },
+    { "serviceId": "book", "count": 95 },
+    { "serviceId": "map", "count": 72 }
+  ],
+  "browserRatio": {
+    "Chrome": 55.5,
+    "Safari": 31.2,
+    "Whale": 13.3
+  }
+}
+```
 
 ## 8. 기술 스택
 
@@ -136,6 +155,7 @@ LinkedHashMap으로 삽입 순서 유지하여 일관된 결과 제공
 - **Framework**: Spring Boot 3.5
 - **Build Tool**: Gradle
 - **JSON 처리**: Jackson ObjectMapper
+- **Logging**: SLF4J + Logback (Spring Boot 기본 로깅)
 - **Architecture**: Layered Architecture (Controller → Service → Repository)
 
 ## 9. 프로젝트 구조
@@ -155,3 +175,20 @@ src/main/java/com/jw/log_analyzer
 - **새로운 로그 형식**: Repository의 파싱 로직만 추가
 - **대용량 처리**: Stream 기반 처리로 메모리 효율성 확보
 - **REST API 확대**: Controller에 새로운 엔드포인트 추가
+
+## 11. 로깅 및 로그 파일 저장
+
+- 요청 진입 시 파일명/파일 크기 `info` 로그 기록
+- 분석 단계별 `info` 로그 기록
+  - 분석 시작
+  - 파일 파싱 시작/완료
+  - 통계 계산 시작/완료
+  - 분석 완료(`durationMs`)
+- 개별 라인 파싱 실패 시 전체 실패로 처리하지 않고 `warn` 로그 기록
+  - `lineNumber`, 예외 메시지 포함
+- 전체 분석 실패 시 `error` 로그 기록
+  - 파일명, 예외 정보 포함
+- 로그 저장 경로: `logs/log-analyzer.log`
+- 롤링 정책:
+  - 최대 파일 크기: `10MB`
+  - 최대 보관 파일 수: `7`
