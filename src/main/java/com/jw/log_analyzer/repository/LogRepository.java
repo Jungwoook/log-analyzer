@@ -3,6 +3,7 @@ package com.jw.log_analyzer.repository;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jw.log_analyzer.dto.LogEntryDto;
+import com.jw.log_analyzer.exception.InvalidLogFormatException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Repository;
@@ -74,9 +75,12 @@ public class LogRepository {
     private LogEntryDto safeParseLine(String line, long lineNumber) {
         try {
             return parseLine(line);
+        } catch (InvalidLogFormatException e) {
+            log.warn("Invalid log format detected. lineNumber={}, error={}", lineNumber, e.getMessage());
+            throw new InvalidLogFormatException("Unsupported log format at line " + lineNumber + ": " + e.getMessage(), e);
         } catch (RuntimeException e) {
-            log.warn("Failed to parse log line. lineNumber={}, error={}", lineNumber, e.getMessage());
-            return null;
+            log.warn("Invalid log format detected. lineNumber={}, error={}", lineNumber, e.getMessage());
+            throw new InvalidLogFormatException("Unsupported log format at line " + lineNumber, e);
         }
     }
 
@@ -91,7 +95,7 @@ public class LogRepository {
     private LogEntryDto parseBracketLine(String line) {
         Matcher m = LINE_PATTERN.matcher(line);
         if (!m.find()) {
-            throw new IllegalArgumentException("Unsupported bracket log format");
+            throw new InvalidLogFormatException("Unsupported bracket log format");
         }
 
         int status = Integer.parseInt(m.group(1));
@@ -116,7 +120,7 @@ public class LogRepository {
             String timestamp = node.path("@timestamp").asText(null);
 
             if (timestamp == null || url == null) {
-                throw new IllegalArgumentException("Missing required JSON fields");
+                throw new InvalidLogFormatException("Missing required JSON fields");
             }
 
             if (serviceId == null) {
@@ -125,8 +129,10 @@ public class LogRepository {
 
             LocalDateTime ts = LocalDateTime.ofInstant(Instant.parse(timestamp), ZoneOffset.UTC);
             return new LogEntryDto(status, url, serviceId, apiKey, browser, ts);
+        } catch (InvalidLogFormatException e) {
+            throw e;
         } catch (Exception e) {
-            throw new IllegalArgumentException("Invalid JSON log format: " + e.getMessage(), e);
+            throw new InvalidLogFormatException("Invalid JSON log format: " + e.getMessage(), e);
         }
     }
 

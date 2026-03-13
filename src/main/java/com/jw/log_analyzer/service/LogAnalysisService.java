@@ -34,23 +34,21 @@ public class LogAnalysisService {
         long totalBrowser = 0L;
         long parsedCount = 0L;
 
-        try {
+        try (Stream<LogEntryDto> logs = repository.streamLogs(file)) {
             log.info("File parsing started. fileName={}", fileName);
-            try (Stream<LogEntryDto> logs = repository.streamLogs(file)) {
-                Iterator<LogEntryDto> iterator = logs.iterator();
-                while (iterator.hasNext()) {
-                    LogEntryDto entry = iterator.next();
-                    parsedCount++;
-                    if (hasText(entry.getApiKey())) {
-                        apiKeyCounts.merge(entry.getApiKey(), 1L, Long::sum);
-                    }
-                    if (hasText(entry.getServiceId())) {
-                        serviceCounts.merge(entry.getServiceId(), 1L, Long::sum);
-                    }
-                    if (hasText(entry.getBrowser())) {
-                        browserCounts.merge(entry.getBrowser(), 1L, Long::sum);
-                        totalBrowser++;
-                    }
+            Iterator<LogEntryDto> iterator = logs.iterator();
+            while (iterator.hasNext()) {
+                LogEntryDto entry = iterator.next();
+                parsedCount++;
+                if (hasText(entry.getApiKey())) {
+                    apiKeyCounts.merge(entry.getApiKey(), 1L, Long::sum);
+                }
+                if (hasText(entry.getServiceId())) {
+                    serviceCounts.merge(entry.getServiceId(), 1L, Long::sum);
+                }
+                if (hasText(entry.getBrowser())) {
+                    browserCounts.merge(entry.getBrowser(), 1L, Long::sum);
+                    totalBrowser++;
                 }
             }
             log.info("File parsing completed. fileName={}, parsedEntries={}", fileName, parsedCount);

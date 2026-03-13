@@ -2,6 +2,7 @@ package com.jw.log_analyzer.controller;
 
 import com.jw.log_analyzer.dto.AnalysisResultDto;
 import com.jw.log_analyzer.dto.AnalysisResultDto.TopServiceDto;
+import com.jw.log_analyzer.exception.InvalidLogFormatException;
 import com.jw.log_analyzer.service.LogAnalysisService;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -52,5 +53,20 @@ class LogAnalysisControllerTest {
                 .andExpect(jsonPath("$.browserRatio.Chrome").value(50.0));
 
         verify(service).analyze(any());
+    }
+
+    @Test
+    void analyzeEndpointReturnsBadRequestWhenLogFormatIsInvalid() throws Exception {
+        MockMultipartFile file = new MockMultipartFile(
+                "file",
+                "upload.log",
+                "text/plain",
+                "invalid-format".getBytes()
+        );
+        when(service.analyze(any())).thenThrow(new InvalidLogFormatException("Unsupported log format at line 1"));
+
+        mockMvc.perform(multipart("/api/analyze").file(file))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.message").value("Unsupported log format at line 1"));
     }
 }
