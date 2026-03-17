@@ -4,24 +4,20 @@ import com.jw.log_analyzer.dto.AnalysisResultDto;
 import com.jw.log_analyzer.dto.AnalysisResultDto.TopServiceDto;
 import com.jw.log_analyzer.dto.LogEntryDto;
 import com.jw.log_analyzer.repository.LogRepository;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.util.*;
 import java.util.stream.Stream;
 
+@Slf4j
 @Service
+@RequiredArgsConstructor
 public class LogAnalysisService {
 
-    private static final Logger log = LoggerFactory.getLogger(LogAnalysisService.class);
-
     private final LogRepository repository;
-
-    public LogAnalysisService(LogRepository repository) {
-        this.repository = repository;
-    }
 
     public AnalysisResultDto analyze(MultipartFile file) {
         long startTime = System.currentTimeMillis();
