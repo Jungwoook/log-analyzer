@@ -1,11 +1,14 @@
 package com.jw.log_analyzer.repository;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jw.log_analyzer.dto.LogEntryDto;
 import com.jw.log_analyzer.exception.InvalidLogFormatException;
+import com.jw.log_analyzer.parser.ApacheAccessLogParser;
+import com.jw.log_analyzer.parser.CompositeLogParser;
+import com.jw.log_analyzer.parser.DefaultLogParser;
+import com.jw.log_analyzer.parser.LogParser;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Repository;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -15,16 +18,10 @@ import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
-import java.time.Instant;
-import java.time.LocalDateTime;
-import java.time.ZoneOffset;
-import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -32,11 +29,23 @@ import java.util.stream.Stream;
 public class LogRepository {
 
     private static final Logger log = LoggerFactory.getLogger(LogRepository.class);
-    private static final Pattern LINE_PATTERN = Pattern.compile("\\[(\\d+)]\\[(.*?)\\]\\[(.*?)\\]\\[(.*?)\\]");
-    private static final Pattern APIKEY_PATTERN = Pattern.compile("[?&]apikey=([A-Za-z0-9]{4})(?:&|$)");
-    private static final DateTimeFormatter DATE_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+    private final CompositeLogParser logParser;
 
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    public LogRepository() {
+        this(new CompositeLogParser(List.of(
+                new ApacheAccessLogParser(),
+                new DefaultLogParser()
+        )));
+    }
+
+    @Autowired
+    public LogRepository(List<LogParser> parsers) {
+        this(new CompositeLogParser(parsers));
+    }
+
+    LogRepository(CompositeLogParser logParser) {
+        this.logParser = logParser;
+    }
 
     public List<LogEntryDto> readAllLogs(MultipartFile file) {
         try (Stream<LogEntryDto> logs = streamLogs(file)) {
@@ -61,15 +70,7 @@ public class LogRepository {
     }
 
     private LogEntryDto parseLine(String line) {
-        String trimmed = line.trim();
-        if (trimmed.isEmpty()) {
-            return null;
-        }
-
-        if (trimmed.startsWith("{")) {
-            return parseJsonLine(trimmed);
-        }
-        return parseBracketLine(trimmed);
+        return logParser.parse(line);
     }
 
     private LogEntryDto safeParseLine(String line, long lineNumber) {
@@ -92,98 +93,4 @@ public class LogRepository {
         }
     }
 
-    private LogEntryDto parseBracketLine(String line) {
-        Matcher m = LINE_PATTERN.matcher(line);
-        if (!m.find()) {
-            throw new InvalidLogFormatException("Unsupported bracket log format");
-        }
-
-        int status = Integer.parseInt(m.group(1));
-        String url = m.group(2);
-        String browser = m.group(3);
-        String timeStr = m.group(4);
-        LocalDateTime ts = LocalDateTime.parse(timeStr, DATE_FORMAT);
-        
-        String serviceId = extractServiceIdFromUrl(url);
-        String apiKey = extractApiKeyFromUrl(url);
-        return new LogEntryDto(status, url, serviceId, apiKey, browser, ts);
-    }
-
-    private LogEntryDto parseJsonLine(String line) {
-        try {
-            JsonNode node = objectMapper.readTree(line);
-            int status = node.path("status_code").asInt();
-            String url = node.path("url").asText(null);
-            String browser = sanitizeText(node.path("browser").asText(null));
-            String serviceId = sanitizeText(node.path("service_id").asText(null));
-            String apiKey = sanitizeText(node.path("api_key").asText(null));
-            String timestamp = node.path("@timestamp").asText(null);
-
-            if (timestamp == null || url == null) {
-                throw new InvalidLogFormatException("Missing required JSON fields");
-            }
-
-            if (serviceId == null) {
-                serviceId = extractServiceIdFromUrl(url);
-            }
-
-            LocalDateTime ts = LocalDateTime.ofInstant(Instant.parse(timestamp), ZoneOffset.UTC);
-            return new LogEntryDto(status, url, serviceId, apiKey, browser, ts);
-        } catch (InvalidLogFormatException e) {
-            throw e;
-        } catch (Exception e) {
-            throw new InvalidLogFormatException("Invalid JSON log format: " + e.getMessage(), e);
-        }
-    }
-
-    private String extractServiceIdFromUrl(String url) {
-        String serviceId = extractSegment(url, "/search/");
-        if (serviceId != null) {
-            return normalizeServiceId(serviceId);
-        }
-        return extractSegment(url, "/v1/");
-    }
-
-    private String extractSegment(String url, String marker) {
-        int idx = url.indexOf(marker);
-        if (idx < 0) {
-            return null;
-        }
-
-        int start = idx + marker.length();
-        int q = url.indexOf('?', start);
-        return sanitizeText(q >= 0 ? url.substring(start, q) : url.substring(start));
-    }
-
-    private String normalizeServiceId(String serviceId) {
-        if (serviceId == null) {
-            return null;
-        }
-        switch (serviceId) {
-            case "blog":
-            case "book":
-            case "image":
-            case "knowledge":
-            case "news":
-            case "vclip":
-                return serviceId;
-            default:
-                return null;
-        }
-    }
-
-    private String extractApiKeyFromUrl(String url) {
-        Matcher m = APIKEY_PATTERN.matcher(url);
-        if (m.find()) return m.group(1);
-        return null;
-    }
-
-    private String sanitizeText(String value) {
-        if (value == null) {
-            return null;
-        }
-
-        String trimmed = value.trim();
-        return trimmed.isEmpty() ? null : trimmed;
-    }
 }
