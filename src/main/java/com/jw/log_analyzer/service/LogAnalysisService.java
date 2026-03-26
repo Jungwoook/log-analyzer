@@ -20,11 +20,6 @@ public class LogAnalysisService {
     private final LogRepository repository;
     private final LogAnalysisResultAssembler resultAssembler;
 
-    public LogAnalysisService(LogRepository repository, LogAnalysisResultAssembler resultAssembler) {
-        this.repository = repository;
-        this.resultAssembler = resultAssembler;
-    }
-
     public AnalysisResultDto analyze(MultipartFile file) {
         long startTime = System.currentTimeMillis();
         String fileName = file.getOriginalFilename();

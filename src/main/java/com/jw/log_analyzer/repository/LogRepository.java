@@ -6,8 +6,7 @@ import com.jw.log_analyzer.parser.ApacheAccessLogParser;
 import com.jw.log_analyzer.parser.CompositeLogParser;
 import com.jw.log_analyzer.parser.DefaultLogParser;
 import com.jw.log_analyzer.parser.LogParser;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Repository;
 import org.springframework.web.multipart.MultipartFile;
@@ -29,7 +28,6 @@ import java.util.stream.Stream;
 @Repository
 public class LogRepository {
 
-    private static final Logger log = LoggerFactory.getLogger(LogRepository.class);
     private final CompositeLogParser logParser;
 
     public LogRepository() {
