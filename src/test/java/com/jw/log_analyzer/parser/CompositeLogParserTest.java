@@ -26,31 +26,31 @@ class CompositeLogParserTest {
     }
 
     @Test
-    void parseSelectsApacheParserBeforeDefaultCatchAllParser() {
+    void parseSelectsMaverParserBeforeKokoaParser() {
         CompositeLogParser compositeLogParser = new CompositeLogParser(List.of(
-                new ApacheAccessLogParser(),
-                new DefaultLogParser()
+                new MaverLogParser(),
+                new KokoaLogParser()
         ));
 
         LogEntryDto result = compositeLogParser.parse(
-                "127.0.0.1 - - [10/Jun/2012:08:00:00 +0000] \"GET /search/news?apikey=a1b2 HTTP/1.1\" 200 2326 \"-\" \"Mozilla/5.0 Chrome/124.0\""
+                "{\"@timestamp\":\"2012-06-10T08:00:00.000Z\",\"status_code\":200,\"url\":\"http://apis.maver.com/v1/news\",\"service_id\":\"news\",\"api_key\":\"a1b2c3\"}"
         );
 
-        assertThat(result.getUrl()).isEqualTo("/search/news?apikey=a1b2");
+        assertThat(result.getUrl()).isEqualTo("http://apis.maver.com/v1/news");
         assertThat(result.getServiceId()).isEqualTo("news");
-        assertThat(result.getBrowser()).isEqualTo("Chrome");
+        assertThat(result.getBrowser()).isNull();
     }
 
     @Test
     void parsePropagatesFailureWhenNoParserCanHandleLine() {
         CompositeLogParser compositeLogParser = new CompositeLogParser(List.of(
-                new ApacheAccessLogParser(),
-                new DefaultLogParser()
+                new MaverLogParser(),
+                new KokoaLogParser()
         ));
 
         assertThatThrownBy(() -> compositeLogParser.parse("totally-invalid"))
                 .isInstanceOf(InvalidLogFormatException.class)
-                .hasMessageContaining("Unsupported bracket log format");
+                .hasMessageContaining("Unsupported log format");
     }
 
     private static class FailingParser implements LogParser {

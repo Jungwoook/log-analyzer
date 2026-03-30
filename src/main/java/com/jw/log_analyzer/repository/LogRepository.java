@@ -2,10 +2,10 @@ package com.jw.log_analyzer.repository;
 
 import com.jw.log_analyzer.dto.LogEntryDto;
 import com.jw.log_analyzer.exception.InvalidLogFormatException;
-import com.jw.log_analyzer.parser.ApacheAccessLogParser;
 import com.jw.log_analyzer.parser.CompositeLogParser;
-import com.jw.log_analyzer.parser.DefaultLogParser;
+import com.jw.log_analyzer.parser.KokoaLogParser;
 import com.jw.log_analyzer.parser.LogParser;
+import com.jw.log_analyzer.parser.MaverLogParser;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Repository;
@@ -32,8 +32,8 @@ public class LogRepository {
 
     public LogRepository() {
         this(new CompositeLogParser(List.of(
-                new ApacheAccessLogParser(),
-                new DefaultLogParser()
+                new MaverLogParser(),
+                new KokoaLogParser()
         )));
     }
 
