@@ -1,284 +1,196 @@
 # 로그 분석 리팩토링 요약
 
-## 한눈에 보는 변경 사항
+## 간략 요약
 
-이번 리팩토링은 "기능은 유지하면서, 코드 구조를 더 쉽게 확장하고 관리할 수 있게 바꾸는 작업"에 초점을 맞췄습니다.
+이번 리팩토링으로 프로젝트를 실제 `modular monolith` 형태로 재구성했습니다.
 
-비전문가 기준으로 보면 아래 변화가 핵심입니다.
+- Gradle 멀티 모듈 구조로 분리했습니다.
+- `parser-contract`, `parser`, `analysis`, `app-core` 경계를 코드와 빌드 설정으로 고정했습니다.
+- 공통 로그 모델을 `LogRecord`로 분리했고, parser 선택 정책과 도메인별 `serviceId` 정책을 각 모듈 책임에 맞게 이동했습니다.
+- `app-core`는 HTTP 요청 처리와 유스케이스 orchestration만 담당하도록 정리했습니다.
+- 전체 테스트는 `./gradlew test`로 통과했습니다.
 
-- 로그를 읽고 해석하고 결과를 계산하는 일이 한 곳에 몰려 있던 구조를 역할별로 나눴습니다.
-- 새로운 로그 형식이 들어와도 기존 코드를 크게 건드리지 않고 추가할 수 있는 방향으로 바꿨습니다.
-- 분석 항목별 계산 로직을 분리해서, 어떤 값을 어떻게 계산하는지 더 명확해졌습니다.
-- 테스트 범위를 넓혀서 기존 기능이 깨지지 않는지 확인하기 쉬워졌습니다.
+## 상세 설명
 
-즉, 사용자 입장에서 바로 보이는 기능 변화보다는, 앞으로 유지보수와 기능 추가가 쉬워지도록 내부 구조를 정리한 작업입니다.
+### 1. 최종 모듈 구성
 
-## 비전문가용 요약
-
-### 무엇이 좋아졌나
-
-- 기존에는 로그를 읽는 일, 로그 형식을 해석하는 일, 통계를 계산하는 일이 일부 클래스에 많이 몰려 있었습니다.
-- 이제는 각 역할이 분리되어 문제가 생겨도 원인을 찾기 쉽고, 수정 범위도 줄어들었습니다.
-- 새 로그 형식을 지원해야 할 때 전체 흐름을 다시 손대기보다, 해당 형식용 처리기만 추가하면 되는 구조에 가까워졌습니다.
-- 분석 결과를 만드는 과정도 단계별로 나뉘어, 이후 요구사항이 바뀌어도 대응이 쉬워졌습니다.
-
-### 유지된 점
-
-- 기존 API 응답 형식은 유지됩니다.
-- 기존 기본 로그 형식 처리도 계속 지원됩니다.
-- 테스트를 통해 기존 동작이 깨지지 않았는지 확인하는 방향으로 정리되었습니다.
-
-### 이 문서에서 뒤에 나오는 내용
-
-아래부터는 실제로 어떤 패키지와 클래스가 어떻게 분리되었는지, 책임이 어떻게 바뀌었는지, 확장 방식과 테스트 범위가 어떻게 달라졌는지 기술적으로 설명합니다.
-
-## 기술 요약
-
-이번 리팩토링의 핵심 방향은 다음 두 가지입니다.
-
-- 로그 파싱 구조를 인터페이스 기반으로 분리
-- 분석 로직을 계산기 단위로 분리
-
-기존에는 `LogRepository`가 로그 형식 판별, 파싱, URL 기반 필드 추출까지 함께 담당했고, `LogAnalysisService`가 통계 계산과 응답 조합까지 모두 처리했습니다. 현재는 parser 계층과 analysis 계층을 분리하여 서비스가 전체 흐름을 조율하는 역할에 더 가깝도록 정리되었습니다.
-
-## 변경된 구조
-
-### 메인 패키지 구성
+현재 구조는 아래처럼 분리되어 있습니다.
 
 ```text
-com.jw.log_analyzer
-├─ analysis
-│  ├─ MostCalledApiKeyCalculator
-│  ├─ TopServicesCalculator
-│  ├─ BrowserRatioCalculator
-│  └─ LogAnalysisResultAssembler
-├─ controller
-│  ├─ LogAnalysisController
-│  └─ GlobalExceptionHandler
-├─ dto
-│  ├─ LogEntryDto
-│  └─ AnalysisResultDto
-├─ exception
-│  └─ InvalidLogFormatException
+log-analyzer/
+├─ app-core
+├─ parser-contract
 ├─ parser
-│  ├─ LogParser
-│  ├─ CompositeLogParser
-│  ├─ KokoaLogParser
-│  ├─ MaverLogParser
-│  └─ UrlFieldExtractor
-├─ repository
-│  └─ LogRepository
-└─ service
-   └─ LogAnalysisService
+└─ analysis
 ```
 
-### 테스트 패키지 구성
+각 모듈 책임은 다음과 같습니다.
+
+- `app-core`
+  - Spring Boot 애플리케이션
+  - controller, service, repository
+  - API 응답 DTO
+  - 분석 결과를 API DTO로 변환하는 mapper
+- `parser-contract`
+  - parser 공통 계약
+  - 공통 로그 모델 `LogRecord`
+  - parser 컨텍스트
+  - 공통 예외
+- `parser`
+  - parser 선택 정책
+  - composite parser 조합
+  - `KokoaLogParser`
+  - `MaverLogParser`
+  - `UrlFieldExtractor`
+  - 도메인별 `ServiceIdPolicy`
+- `analysis`
+  - 통계 계산기
+  - 분석 결과 조합기
+  - 내부 분석 결과 모델
+
+### 2. 모듈 의존 구조
+
+실제 의존 구조도 문서 방향에 맞게 정리했습니다.
 
 ```text
-src/test/java/com/jw/log_analyzer
-├─ analysis
-│  └─ LogAnalysisResultAssemblerTest
-├─ controller
-│  └─ LogAnalysisControllerTest
-├─ parser
-│  ├─ KokoaLogParserTest
-│  ├─ MaverLogParserTest
-│  └─ CompositeLogParserTest
-├─ repository
-│  └─ LogRepositoryTest
-└─ service
-   ├─ LogAnalysisServiceTest
-   └─ MaverLogAnalysisTest
+app-core
+ ├─ parser-contract
+ ├─ parser
+ └─ analysis
+
+parser
+ └─ parser-contract
+
+analysis
+ └─ parser-contract
 ```
 
-## 주요 설계 차이
+핵심은 다음 두 가지입니다.
 
-### 1. 서비스는 orchestration 중심
+- parser 구현체가 `app-core`를 참조하지 않습니다.
+- analysis가 controller/repository/API DTO를 알지 않습니다.
 
-`LogAnalysisService`는 현재 아래 흐름을 조율하는 역할에 집중합니다.
+이전에는 단일 모듈 안에서 패키지 수준 분리만 되어 있었지만, 지금은 잘못된 참조가 Gradle 의존성 단계에서 더 빨리 드러나는 구조입니다.
 
-1. 업로드 파일에서 로그 스트림 요청
-2. 파싱 결과 수집
-3. 분석 조합 컴포넌트 호출
-4. 결과 반환 및 로그 기록
+### 3. 공통 모델 분리
 
-서비스는 더 이상 구체적인 필드 추출이나 통계 계산 규칙을 직접 구현하는 중심 지점이 아니도록 정리되었습니다.
+기존 `LogEntryDto`는 사실상 API DTO라기보다 parser와 analysis 사이의 공통 도메인 모델 역할을 하고 있었습니다. 이 상태로는 문서에서 말한 `parser-contract` 경계를 만들기 어렵습니다.
 
-### 2. 파싱은 인터페이스 기반 확장 구조
+이번 리팩토링에서는 이 모델을 `parser-contract`의 `LogRecord`로 이동했습니다.
 
-`LogParser` 인터페이스를 기준으로 각 parser가 아래 책임을 가집니다.
+이 변경으로 얻은 효과는 아래와 같습니다.
 
-- `supports(String line)`: 해당 라인을 처리할 수 있는지 판단
-- `parse(String line)`: 공통 로그 모델(`LogEntryDto`)로 변환
+- parser는 `LogRecord`만 반환합니다.
+- analysis는 `LogRecord`만 받아서 계산합니다.
+- API 응답 모델은 `app-core`의 `AnalysisResultDto`로 분리됩니다.
 
-`CompositeLogParser`는 여러 parser를 조합하고, 앞선 parser가 처리하지 못하면 다음 parser를 시도합니다. 이 구조 덕분에 새로운 로그 형식을 추가할 때 기존 parser를 크게 수정하지 않고 구현체를 추가하는 방식으로 확장할 수 있습니다.
+즉, 내부 처리 모델과 외부 응답 모델의 경계가 분명해졌습니다.
 
-### 3. 공통 필드 추출 규칙 분리
+### 4. 파서 선택 구조
 
-`UrlFieldExtractor`가 URL 기반 `serviceId`, `apiKey` 추출 책임을 가집니다. 기본 parser와 Apache parser가 같은 규칙을 공유하므로, 파서가 늘어나도 URL 해석 규칙이 중복되지 않도록 정리되었습니다.
+parser 선택 구조는 아래처럼 정리했습니다.
 
-### 4. 분석 항목별 계산기 분리
+- `parser-contract`
+  - `LogParser`
+  - `ParserContext`
+- `parser`
+  - `ParserSelectionPolicy`
+  - `CompositeLogParser`
 
-분석 항목은 아래처럼 분리되어 있습니다.
+선택 규칙은 문서의 유스케이스를 따라 아래 순서로 동작합니다.
 
-- `MostCalledApiKeyCalculator`
-- `TopServicesCalculator`
-- `BrowserRatioCalculator`
+1. 라인 내용으로 먼저 식별합니다.
+2. 내용으로 하나만 식별되면 바로 선택합니다.
+3. 내용 후보가 여러 개면 파일명으로 좁힙니다.
+4. 내용으로 식별이 안 되면 파일명을 보조 힌트로 사용합니다.
+5. 그래도 결정할 수 없으면 명시적으로 실패합니다.
 
-그리고 `LogAnalysisResultAssembler`가 각 계산 결과를 기존 응답 DTO 형식으로 조합합니다.
+이제 parser 선택 기준이 구현체 등록 순서가 아니라 정책 객체에 모여 있습니다.
 
-## 계층별 책임 정리
+### 5. parser 구현체와 `serviceId` 정책
 
-### controller
+`parser` 모듈에는 선택 정책과 실제 parser 구현을 함께 배치했습니다.
 
-- `LogAnalysisController`
-  - HTTP 요청 수신
-  - 파일 업로드 입력 처리
-  - 서비스 호출
-- `GlobalExceptionHandler`
-  - `InvalidLogFormatException`을 `400 Bad Request`로 변환
-
-### service
-
-- `LogAnalysisService`
-  - 파싱과 분석 흐름 조율
-  - 처리 단계별 로깅
-  - 상세 계산 로직 비보유
-
-### repository
-
-- `LogRepository`
-  - `MultipartFile`에서 스트림 생성
-  - 라인 단위 읽기
-  - parser 선택기(`CompositeLogParser`)에 위임
-  - 라인 번호 기반 예외 래핑
-
-현재 이름은 `Repository`지만 실제 역할은 파일 기반 ingestion adapter에 더 가깝습니다.
-
-### parser
-
-- `LogParser`
-  - parser 구현체 공통 계약
 - `KokoaLogParser`
-  - 기존 bracket 형식 + JSON lines 형식 처리
+  - bracket 로그 처리
+  - `KokoaServiceIdPolicy` 사용
 - `MaverLogParser`
-  - 신규 Apache/Nginx 계열 access log 예시 처리
-- `CompositeLogParser`
-  - parser registry / selection / fallback 담당
+  - JSON 로그 처리
+  - `MaverServiceIdPolicy` 사용
 - `UrlFieldExtractor`
-  - URL 기반 파생 필드 추출
+  - URL에서 원시 값 추출
 
-### analysis
+`serviceId` 정책도 도메인별로 분리했습니다.
+
+- `KokoaServiceIdPolicy`
+  - 허용 목록 기반 검증
+- `MaverServiceIdPolicy`
+  - 비어 있지 않은 문자열 허용
+
+이 구조로 인해 parser가 직접 정책을 하드코딩하지 않고, 구현체 내부에서 필요한 규칙만 조합하도록 바뀌었습니다.
+
+### 6. analysis 모듈 정리
+
+`analysis` 모듈은 이제 `parser-contract`에만 의존합니다.
+
+포함된 구성은 다음과 같습니다.
 
 - `MostCalledApiKeyCalculator`
-  - 최다 호출 API Key 계산
 - `TopServicesCalculator`
-  - 상위 3개 서비스 계산
 - `BrowserRatioCalculator`
-  - 브라우저 비율 계산
 - `LogAnalysisResultAssembler`
-  - 계산 결과를 기존 `AnalysisResultDto`로 조합
+- `AnalysisResult`
+- `TopServiceCount`
 
-### dto
+중요한 점은 `analysis`가 더 이상 `AnalysisResultDto`를 만들지 않는다는 점입니다. 먼저 내부 결과 모델 `AnalysisResult`를 만들고, 이 값을 `app-core`에서 API 응답 DTO로 변환합니다.
 
-- `LogEntryDto`
-  - parser와 analyzer 사이의 공통 로그 모델
-- `AnalysisResultDto`
-  - 외부 API 응답 모델
+이 분리 덕분에 analysis는 HTTP 응답 형태와 독립적으로 유지됩니다.
 
-## 리팩토링 전후 비교
+### 7. app-core 역할 축소
 
-### 리팩토링 전
+`app-core`는 다음 역할만 담당하도록 정리했습니다.
 
-- `LogRepository`가 형식 감지, 파싱, URL 추출까지 직접 처리
-- `LogAnalysisService`가 집계, 정렬, 비율 계산까지 직접 처리
-- 새로운 로그 형식 추가 시 기존 클래스 내부 분기 수정 필요
-- 테스트가 계층 단위 중심이라 세부 규칙 검증이 어려움
+- 파일 업로드 요청 수신
+- 로그 스트림 읽기 orchestration
+- parser runtime 호출
+- analysis 호출
+- 분석 결과를 API DTO로 변환
+- 예외를 HTTP 응답으로 변환
 
-### 리팩토링 후
+즉, `app-core`는 애플리케이션 조립과 입출력 어댑터 역할을 담당하고, parser/analysis의 상세 규칙은 각 하위 모듈이 맡습니다.
 
-- parser 계층이 인터페이스 기반 구조로 분리됨
-- 기본 parser와 신규 parser가 공존 가능
-- 서비스는 orchestration 중심으로 단순화됨
-- 분석 항목별 계산기가 분리되어 책임이 명확해짐
-- parser 단위 테스트와 analyzer 조합 테스트가 추가됨
-- 새로운 로그 형식 추가가 "기존 클래스 수정"보다 "구현체 추가" 중심으로 바뀜
+### 8. 테스트 재배치
 
-## 확장 방법
+테스트도 모듈별로 재배치했습니다.
 
-### 새로운 로그 형식 추가
+- `app-core`
+  - controller, service, repository, boot 테스트
+- `parser`
+  - `CompositeLogParserTest`
+  - `KokoaLogParserTest`
+  - `MaverLogParserTest`
+- `analysis`
+  - `LogAnalysisResultAssemblerTest`
 
-1. `LogParser` 구현체 생성
-2. `supports()`와 `parse()` 구현
-3. 필요하면 공통 extractor 재사용
-4. Spring bean으로 등록하거나 기본 조합에 추가
-5. parser 단위 테스트 추가
+즉, 테스트 위치 자체도 모듈 경계를 따르도록 정리했습니다.
 
-현재 Apache access log parser 추가로 이 확장 방식이 실제 동작함을 검증했습니다.
+### 9. 검증 결과
 
-### 새로운 분석 항목 추가
+- 실행 명령: `./gradlew test`
+- 결과: 통과
 
-1. `LogEntryDto` 컬렉션을 입력받는 계산기 추가
-2. `LogAnalysisResultAssembler`에 조합 로직 반영
-3. 필요 시 응답 DTO 확장
-4. 계산기 단위 테스트 추가
+멀티 모듈 컴파일과 모듈별 테스트가 모두 정상 수행되는 것을 확인했습니다.
 
-현재 구조는 parser와 analyzer가 서로 직접 의존하지 않으므로, 로그 형식이 늘어나더라도 분석 계층은 공통 모델 기준으로 동작합니다.
+### 10. 이번 작업의 의미
 
-## 테스트 현황
+이번 리팩토링은 단순한 패키지 정리가 아니라, 문서에 적어둔 modular monolith 구조를 실제 빌드 단위로 구현한 작업입니다.
 
-현재 테스트는 아래 범위를 포함합니다.
+정리하면 아래와 같습니다.
 
-- 컨트롤러 응답 형식 및 예외 처리
-- 서비스 레벨 분석 결과 검증
-- 기본 로그 및 JSON 로그 분석 검증
-- repository의 파일 기반 읽기와 파싱 위임
-- 기본 parser의 `supports()` / 정상 파싱 / 실패 케이스
-- Apache parser의 `supports()` / 정상 파싱 / 실패 케이스
-- composite parser의 선택 / fallback / 실패 전파
-- analysis 조합 결과 검증
+- 단일 모듈 프로젝트를 멀티 모듈 프로젝트로 전환했습니다.
+- 공통 계약, parser, 분석, 애플리케이션 코어를 분리했습니다.
+- DTO와 내부 처리 모델의 경계를 나눴습니다.
+- parser 선택 규칙과 도메인 정책을 모듈 경계에 맞게 배치했습니다.
+- 테스트도 모듈별로 재정렬했습니다.
 
-### 확인 결과
-
-- `./gradlew test` 통과
-- 기존 API 응답 형식 유지
-- 기존 기본 로그 형식 지원 유지
-- 신규 Apache access log 예시 형식 추가 완료
-
-## 추가 개선 후보
-
-### 1. `LogRepository` 명칭과 역할 재정리
-
-현재 클래스는 repository보다는 file ingestion adapter에 가깝습니다. 이후 `LogFileReader`, `LogIngestionAdapter` 같은 이름으로 조정하면 역할이 더 명확해질 수 있습니다.
-
-### 2. 내부 도메인 모델과 API DTO 분리
-
-현재 `LogEntryDto`가 내부 공통 모델 역할까지 함께 수행합니다. 이후 `LogRecord` 같은 내부 모델을 도입하면 API DTO와 내부 모델의 경계가 더 명확해질 수 있습니다.
-
-### 3. 예외 정책 세분화
-
-현재는 parser fallback은 가능하지만 최종적으로는 잘못된 라인에서 전체 분석이 실패합니다. 이후 아래 정책을 선택 가능하게 만들 수 있습니다.
-
-- strict: 현재처럼 즉시 실패
-- lenient: 잘못된 라인은 건너뛰고 계속 분석
-- threshold-based: 오류율 기준으로 실패
-
-### 4. analyzer 등록형 구조
-
-현재는 `LogAnalysisResultAssembler`가 계산기들을 직접 알고 있습니다. 분석 항목이 더 많아지면 analyzer registry 형태로 바꿔 조합 확장성을 높일 수 있습니다.
-
-### 5. 샘플 리소스 기반 테스트 강화
-
-현재 parser 단위 테스트는 문자열 기반입니다. 이후 샘플 로그 파일을 추가하여 형식별 통합 테스트를 강화하면 회귀 검증에 더 유리합니다.
-
-## 결론
-
-이번 리팩토링은 외부 기능을 크게 바꾸기보다, 내부 구조를 역할별로 분리해 확장성과 유지보수성을 높이는 데 목적이 있었습니다.
-
-정리하면 다음과 같습니다.
-
-- 서비스 계층은 전체 흐름 조율 중심으로 단순화되었습니다.
-- 파싱 구조는 인터페이스 기반으로 분리되었습니다.
-- 분석 로직은 항목별 컴포넌트로 분리되었습니다.
-- 새로운 로그 형식 추가 방식이 더 명확해졌습니다.
-- 테스트도 세부 규칙을 검증할 수 있는 방향으로 보강되었습니다.
+이제 이후 변경은 패키지 정리 수준이 아니라, 각 모듈의 책임 안에서 더 안전하게 확장할 수 있는 상태입니다.
