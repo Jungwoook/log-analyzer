@@ -1,0 +1,9 @@
+plugins {
+    id 'java-library'
+    id 'io.spring.dependency-management'
+}
+
+dependencies {
+    api project(':parser-contract')
+    implementation 'org.springframework:spring-context'
+}

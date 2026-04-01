@@ -1,1 +1,6 @@
 rootProject.name = 'log-analyzer'
+
+include 'app-core'
+include 'parser-contract'
+include 'parser'
+include 'analysis'

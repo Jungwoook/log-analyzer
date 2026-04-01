@@ -1,261 +1,438 @@
-# 로그 분석 구조 진단 및 리팩토링 계획
+# 로그 분석 리팩토링 계획
 
-## 현재 구조 요약
+## 문서 목적
 
-현재 요청 흐름은 `LogAnalysisController -> LogAnalysisService -> LogRepository` 형태의 단순 계층 구조다.
+이 문서는 현재 로그 분석 애플리케이션을 `Gradle 멀티 모듈 기반 modular monolith` 구조로 재설계하기 위한 리팩토링 계획 문서다.
+
+유스케이스 정의는 별도 문서 [docs/refactoring-usecases.md](C:\Users\okjun\Desktop\project\log-analyzer\docs\refactoring-usecases.md)를 기준으로 하며, 이 문서는 그 유스케이스를 만족시키기 위한 구조, 책임 분리, 단계별 실행 계획을 다룬다.
+
+## 핵심 리팩토링 원칙
+
+### 코어 시스템은 계속 단순해야 한다
+
+기본 시스템은 아래 역할만 안정적으로 수행해야 한다.
+
+- 요청 수신
+- 파일 입력 처리
+- 파싱 요청
+- 분석 요청
+- 응답 반환
+
+즉 `controller`, `service`, `repository`는 전체 흐름을 조합하는 역할만 맡고, 아래 규칙은 직접 소유하지 않는다.
+
+- 로그 형식 식별 규칙
+- 형식별 파싱 규칙
+- 도메인별 `serviceId` 해석 규칙
+- 통계 계산 규칙
+
+### parser는 core를 몰라야 한다
+
+core는 parser를 호출할 수 있지만, parser는 core의 구체 구현을 알면 안 된다.
+
+parser가 몰라야 하는 대상:
 
 - `LogAnalysisController`
-  - 업로드된 `MultipartFile`을 그대로 서비스에 전달한다.
 - `LogAnalysisService`
-  - `repository.streamLogs(file)`로 파싱된 로그 스트림을 받아 직접 순회한다.
-  - API Key, Service ID, Browser 통계를 모두 직접 누적하고 정렬 규칙까지 결정한다.
-  - 최종 응답 DTO 조합까지 담당한다.
 - `LogRepository`
-  - 파일 입력 스트림 생성
-  - 라인 단위 스트리밍
-  - 로그 포맷 판별
-  - 한 줄 파싱
-  - URL에서 `serviceId`, `apiKey` 추출
-  - 특정 서비스 ID 정규화
-  - 파싱 실패 예외 래핑
+- `MultipartFile`
+- API 응답 DTO
 
-### 중점 진단 결과
+parser는 오직 parser 계약과 자기 내부 구현만 알아야 한다.
 
-1. 로그 한 줄 파싱 책임
-   - 실제 파싱 책임은 [`src/main/java/com/jw/log_analyzer/repository/LogRepository.java`](../src/main/java/com/jw/log_analyzer/repository/LogRepository.java)의 `parseLine`, `parseBracketLine`, `parseJsonLine`에 집중되어 있다.
-   - 다만 이 클래스는 단순 파서가 아니라 파일 읽기와 예외 정책까지 함께 갖고 있어서 책임이 과도하게 넓다.
+### analysis는 공통 모델만 의존해야 한다
 
-2. 포맷 결합도
-   - `parseLine`은 `trimmed.startsWith("{")`로 JSON 여부를 판별하고, 나머지는 곧바로 bracket 포맷으로 간주한다.
-   - bracket 포맷은 정규식 `LINE_PATTERN`, JSON 포맷은 필드명 `status_code`, `@timestamp`, `service_id`, `api_key`에 강하게 결합되어 있다.
-   - URL 기반 `serviceId` 추출 규칙도 `"/search/"`, `"/v1/"`에 하드코딩되어 있어 공급자별 규칙이 코드에 직접 박혀 있다.
+analysis 모듈은 특정 로그 형식이나 특정 parser 구현을 알면 안 된다. analysis는 공통 로그 모델만 받아 통계를 계산해야 한다.
 
-3. 서비스 계층의 책임 혼합
-   - [`src/main/java/com/jw/log_analyzer/service/LogAnalysisService.java`](../src/main/java/com/jw/log_analyzer/service/LogAnalysisService.java)는 파싱 결과 소비, 집계, 정렬 우선순위, 비율 계산, 응답 DTO 생성까지 모두 수행한다.
-   - 서비스가 오케스트레이션 계층이라기보다 분석 알고리즘 구현체 역할까지 수행한다.
+## 로그 판별 원칙
 
-4. 새 로그 패턴 추가 시 수정 범위
-   - 신규 포맷 지원 시 우선 `LogRepository.parseLine` 분기 추가가 필요하다.
-   - 이어서 신규 파싱 메서드, 필드 매핑, 날짜 변환, URL 파생 규칙, 테스트까지 같은 클래스 중심으로 변경된다.
-   - 포맷마다 결측 필드나 파생 규칙이 달라지면 서비스의 집계 로직과 응답 조합까지 영향이 확산될 가능성이 높다.
+현재처럼 `JSON이면 Maver`, `bracket이면 Kokoa`처럼 형식만으로 도메인을 구분하는 방식은 유지하기 어렵다. 앞으로는 아래 판별 원칙을 적용한다.
 
-5. 테스트 어려움의 구조적 원인
-   - 파서 핵심 메서드가 모두 `private`이라서 라인 단위 테스트를 직접 하기 어렵다.
-   - 파싱 진입점이 `MultipartFile` 기반이라 웹 계층 타입이 하위 계층까지 스며들어 있다.
-   - `ObjectMapper`가 내부에서 직접 생성되어 대체/주입이 어렵다.
-   - 집계 규칙이 서비스 메서드 내부 루프에 박혀 있어 분석 규칙별 독립 테스트가 어렵다.
+### 1순위: 로그 내용 시그니처
 
-## 문제점
+각 도메인 parser는 로그 내용 안에서 자기 도메인을 식별할 수 있는 시그니처를 먼저 검사한다.
 
-### 1. `Repository`가 저장소보다 수집기 + 파서 + 정규화기 역할을 한다
+예:
 
-`LogRepository`는 일반적인 persistence 추상화가 아니라 다음 책임을 동시에 갖는다.
+- 특정 필드명
+- 특정 URL 패턴
+- 고정 prefix
+- 도메인 전용 키 이름
 
-- 파일 열기
-- 라인 스트림 생성
-- 포맷 감지
-- 포맷별 파싱
-- URL 기반 값 추출
-- 서비스 ID 정규화
-- 파싱 실패 정책 결정
+### 2순위: 파일명
 
-이 구조는 "어디에 무엇을 추가해야 하는가"를 흐리게 만들고, 변경이 한 클래스에 과밀하게 쌓이게 만든다.
+로그 내용만으로 도메인을 식별할 수 없을 때만 파일명을 보조 정보로 사용한다.
 
-### 2. 파싱 로직이 특정 로그 포맷과 URL 구조에 강하게 결합되어 있다
+파일명은 신뢰할 수 없는 입력이므로 1순위가 될 수 없고, 시그니처 부재 시에만 제한적으로 사용한다.
 
-현재 파싱은 다음 전제에 의존한다.
+### 시그니처와 파일명으로도 구분되지 않으면 실패
 
-- bracket 로그는 `[status][url][browser][timestamp]` 순서를 가진다.
-- JSON 로그는 `@timestamp`, `status_code`, `url` 등의 고정 필드명을 사용한다.
-- URL 패턴은 `"/search/"` 또는 `"/v1/"`를 가진다.
-- 특정 검색 서비스는 `blog`, `book`, `image`, `knowledge`, `news`, `vclip` 중 하나다.
+아래 조건이면 parser 선택을 실패로 처리한다.
 
-즉, 포맷 파싱과 도메인 해석이 분리되지 않았다. 새 포맷이 들어오면 "문자열을 읽는 규칙"과 "도메인 값을 해석하는 규칙"이 같이 흔들린다.
+- 시그니처가 없다
+- 시그니처가 모호하다
+- 파일명도 도메인 판별에 도움을 주지 못한다
 
-### 3. 서비스 계층이 분석 조합과 통계 계산을 과도하게 담당한다
+이 경우 시스템은 추정 파싱을 시도하지 않고 `unknown` 또는 `ambiguous` 성격의 실패를 반환해야 한다.
 
-`LogAnalysisService`는 현재 다음을 모두 수행한다.
+### 형식은 도메인 판별 이후에 사용
 
-- 파싱 스트림 수명 관리
-- 로그 엔트리 반복
-- 카운트 집계
-- tie-break 정렬 규칙
-- 브라우저 비율 계산
-- 최종 응답 DTO 생성
+`JSON`, `bracket`, `csv` 같은 형식 정보는 도메인 판별의 보조 요소일 수는 있지만, 도메인을 확정하는 1차 기준으로 사용하지 않는다.
 
-이렇게 되면 분석 항목이 늘어날수록 서비스 클래스가 계속 비대해진다. 예를 들어 시간대별 트래픽, 상태 코드 분포, 실패율 같은 요구가 추가되면 같은 클래스에 더 많은 맵과 정렬 규칙이 누적된다.
+권장 흐름:
 
-### 4. 예외 정책이 파서 내부에 고정되어 확장 옵션이 적다
+1. 시그니처 검사
+2. 필요 시 파일명 검사
+3. 도메인 확정
+4. 해당 도메인 parser 내부에서 형식 판별
+5. 파싱 수행
 
-`safeParseLine`은 파싱 실패를 `InvalidLogFormatException`으로 감싸 다시 던진다. 따라서 다음 전략을 나중에 도입하기 어렵다.
+## 도메인별 serviceId 정책
 
-- 잘못된 줄만 skip 하고 계속 분석
-- 허용 가능한 경고 수를 넘을 때만 실패
-- 포맷별 오류 통계 수집
-- strict / lenient 모드 선택
+`serviceId` 규칙은 전역 규칙이 아니라 도메인별 정책으로 분리해야 한다.
 
-예외 정책은 파서 자체보다 상위 오케스트레이션 또는 정책 컴포넌트가 결정하는 편이 확장에 유리하다.
+### 닫힌 도메인
 
-### 5. 테스트 단위가 지나치게 크다
+허용 가능한 `serviceId` 범위가 명확한 도메인이다.
 
-현재 테스트는 크게 두 종류다.
+예:
 
-- `Repository` 전체를 통해 샘플 파일을 읽는 통합성 테스트
-- `Service`에서 목 스트림을 주입하는 집계 테스트
+- `Kokoa`: `blog`, `book`, `image`, `knowledge`, `news`, `vclip`
 
-하지만 다음 단위 테스트가 분리되어 있지 않다.
+이 경우 허용 목록 기반 검증이 적절하다.
 
-- bracket 한 줄 파서 테스트
-- JSON 한 줄 파서 테스트
-- URL 파생 규칙 테스트
-- 서비스 ID 정규화 테스트
-- 통계 계산기 단위 테스트
-- 오류 처리 정책 테스트
+### 열린 도메인
 
-결과적으로 실패 원인을 좁히기 어렵고, 작은 규칙 변경도 큰 범위의 테스트로만 검증하게 된다.
+요구사항에 예시만 있고, 향후 다른 `serviceId`가 추가될 수 있는 도메인이다.
 
-## 개선 목표
+예:
 
-- 파일 읽기, 라인 파싱, 도메인 정규화, 통계 계산 책임을 분리한다.
-- 새 로그 포맷 추가 시 기존 코드 수정 대신 새 파서 추가로 수용할 수 있게 만든다.
-- 서비스 계층은 "분석 흐름 조립"에 집중시키고 계산 규칙은 별도 컴포넌트로 이동한다.
-- 웹 계층 타입(`MultipartFile`)이 파싱 코어에 직접 침투하지 않도록 경계를 정리한다.
-- 작은 단위의 테스트가 가능하도록 인터페이스와 순수 함수성 컴포넌트를 늘린다.
+- `Maver`: `weather`, `stock`, `news`, `map` 등
 
-## 제안 구조
+이 경우 알려진 값 목록은 참고 정보일 뿐이며, 형식적으로 유효한 `serviceId` 문자열이면 허용하는 정책이 적절하다.
 
-아래는 현재 코드를 크게 흔들지 않으면서 확장성을 높이기 위한 제안 구조다.
+### 적용 방식
+
+도메인별 parser 또는 도메인 내부 정책 객체가 자기 `serviceId` 규칙을 소유한다.
+
+예:
+
+- `KokoaServiceIdPolicy`
+- `MaverServiceIdPolicy`
+
+## 목표 모듈 구성
+
+### 1. core module
+
+역할:
+
+- API 요청 수신
+- 유스케이스 orchestration
+- 입력 파일 읽기
+- parser runtime 호출
+- analysis 호출
+- 응답 DTO 반환
+
+패키지:
+
+- `controller`
+- `service`
+- `repository`
+
+### 2. parser-contract module
+
+역할:
+
+- parser 계약 정의
+- parser와 analysis가 공유하는 최소 공통 모델 정의
+
+대상:
+
+- `LogParser`
+- `LogRecord`
+- `ParseResult`
+
+### 3. parser module
+
+역할:
+
+- 등록된 parser 조합
+- parser 선택
+- parser 선택 실패 처리
+
+대상:
+
+- `CompositeLogParser`
+- `LogParserRegistry`
+- `ParserSelectionPolicy`
+
+### 4. parser module internal implementations
+
+역할:
+
+- 도메인별 시그니처 검사
+- 필요 시 파일명 기반 보조 판별
+- 도메인 내부 형식 판별
+- 문자열 파싱
+- 도메인별 필드 추출
+- 도메인별 `serviceId` 정책 적용
+
+예시 구현체:
+
+- `KokoaLogParser`
+- `MaverLogParser`
+- 이후 새 도메인 parser 구현체
+
+이 모듈은 하나로 유지하고, 그 내부에서 도메인 기준 패키지로 나눈다.
+
+### 5. analysis module
+
+역할:
+
+- 공통 로그 모델 기반 통계 계산
+- 결과 조합
+
+대상:
+
+- `MostCalledApiKeyCalculator`
+- `TopServicesCalculator`
+- `BrowserRatioCalculator`
+- `LogAnalysisResultAssembler`
+
+## 모듈 의존 규칙
+
+### 허용되는 의존
+
+- `core -> parser-contract`
+- `core -> parser`
+- `core -> analysis`
+- `parser -> parser-contract`
+- `analysis -> parser-contract`
+
+### 금지되는 의존
+
+- `parser -> core`
+- `analysis -> controller`
+- `analysis -> repository`
+- `parser -> controller`
+- `parser -> service`
+- `parser -> repository`
+
+## 목표 의존 구조
 
 ```text
-controller/
-  LogAnalysisController
+controller -> service -> repository
+                      -> parser -> parser-contract
+                      -> analysis -> parser-contract
 
-application/
-  LogAnalysisService              # 요청 흐름 조립
-
-domain/
-  model/
-    LogRecord                     # 분석용 표준 도메인 모델
-    AnalysisResult
-  analysis/
-    LogStatisticsAggregator       # 카운트 누적
-    AnalysisResultFactory         # 응답 모델 변환
-
-ingestion/
-  source/
-    LogLineSource                 # InputStream/Reader -> Stream<String>
-    MultipartFileLogSource
-  parser/
-    LogParser                     # supports + parse
-    BracketLogParser
-    JsonLineLogParser
-    CompositeLogParser
-    ParseResult                   # success/failure 표현 가능
-  extractor/
-    ServiceIdExtractor
-    ApiKeyExtractor
-  policy/
-    ParseErrorPolicy              # strict/lenient 결정
+parser -> parser-contract
 ```
 
-### 핵심 설계 원칙
+핵심은 parser 구현체가 core를 전혀 모르는 상태를 유지하는 것이다.
 
-1. 표준 도메인 모델 도입
-   - 각 로그 포맷은 먼저 `LogRecord`로 변환한다.
-   - 이후 분석기는 포맷별 차이를 몰라도 된다.
+## 파일 구성과 경로
 
-2. 포맷별 파서 분리
-   - `BracketLogParser`, `JsonLineLogParser`가 각자 자기 포맷만 책임진다.
-   - `CompositeLogParser`가 지원 가능한 파서를 순회하며 선택한다.
-   - 신규 포맷은 새 파서 클래스를 추가하고 조합에 등록하는 방식으로 확장한다.
+리팩토링 이후 파일 구성과 경로는 `옵션 2. Gradle 멀티 모듈 기반 modular monolith`를 기준으로 확정한다.
 
-3. 파싱과 도메인 추출 분리
-   - URL에서 `serviceId`, `apiKey`를 파생하는 규칙은 별도 extractor로 분리한다.
-   - 공급자별 해석 규칙이 바뀌어도 파서 클래스 전체를 흔들지 않게 한다.
+```text
+log-analyzer/
+├─ settings.gradle
+├─ build.gradle
+├─ app-core/
+│  └─ src/main/java/com/jw/log_analyzer/core/
+│     ├─ controller/
+│     ├─ service/
+│     └─ repository/
+├─ parser-contract/
+│  └─ src/main/java/com/jw/log_analyzer/parser_contract/
+│     ├─ LogParser.java
+│     ├─ LogRecord.java
+│     └─ ParseResult.java
+├─ parser/
+│  └─ src/main/java/com/jw/log_analyzer/parser_runtime/
+│     ├─ CompositeLogParser.java
+│     ├─ LogParserRegistry.java
+│     └─ ParserSelectionPolicy.java
+│  └─ src/main/java/com/jw/log_analyzer/parser/
+│     ├─ runtime/
+│     │  ├─ CompositeLogParser.java
+│     │  ├─ LogParserRegistry.java
+│     │  └─ ParserSelectionPolicy.java
+│     └─ implementations/
+│        ├─ kokoa/
+│        │  ├─ KokoaLogParser.java
+│        │  ├─ KokoaServiceIdPolicy.java
+│        │  └─ UrlFieldExtractor.java
+│        └─ maver/
+│           ├─ MaverLogParser.java
+│           └─ MaverServiceIdPolicy.java
+├─ analysis/
+│  └─ src/main/java/com/jw/log_analyzer/analysis/
+│     ├─ MostCalledApiKeyCalculator.java
+│     ├─ TopServicesCalculator.java
+│     ├─ BrowserRatioCalculator.java
+│     └─ LogAnalysisResultAssembler.java
+└─ app-api/
+   └─ src/main/java/com/jw/log_analyzer/dto/
+      └─ AnalysisResultDto.java
+```
 
-4. 분석기 분리
-   - 서비스 내부 루프를 `LogStatisticsAggregator` 같은 별도 컴포넌트로 이동한다.
-   - tie-break, 정렬, 비율 계산 규칙도 이 계층에 모은다.
+## 현재 코드 기준 권장 이동 경로
 
-5. 입력 소스 추상화
-   - 파서 코어는 `MultipartFile` 대신 `InputStream`, `Reader`, `Stream<String>` 수준에서 동작하게 한다.
-   - 테스트에서는 문자열 리스트나 메모리 스트림으로 쉽게 검증할 수 있다.
+### core로 이동할 파일
+
+- `src/main/java/com/jw/log_analyzer/controller/LogAnalysisController.java`
+- `src/main/java/com/jw/log_analyzer/controller/GlobalExceptionHandler.java`
+- `src/main/java/com/jw/log_analyzer/service/LogAnalysisService.java`
+- `src/main/java/com/jw/log_analyzer/repository/LogRepository.java`
+
+### parser-contract로 이동하거나 대체할 파일
+
+- `src/main/java/com/jw/log_analyzer/parser/LogParser.java`
+- `src/main/java/com/jw/log_analyzer/dto/LogEntryDto.java`
+
+`LogEntryDto`는 API DTO보다는 공통 로그 모델 성격이 더 강하므로 `LogRecord`로 대체하는 방향이 적절하다.
+
+### parser로 이동할 runtime 파일
+
+- `src/main/java/com/jw/log_analyzer/parser/CompositeLogParser.java`
+
+### parser로 이동할 implementation 파일
+
+- `src/main/java/com/jw/log_analyzer/parser/KokoaLogParser.java`
+- `src/main/java/com/jw/log_analyzer/parser/MaverLogParser.java`
+- `src/main/java/com/jw/log_analyzer/parser/UrlFieldExtractor.java`
+
+### analysis로 유지 또는 이동할 파일
+
+- `src/main/java/com/jw/log_analyzer/analysis/MostCalledApiKeyCalculator.java`
+- `src/main/java/com/jw/log_analyzer/analysis/TopServicesCalculator.java`
+- `src/main/java/com/jw/log_analyzer/analysis/BrowserRatioCalculator.java`
+- `src/main/java/com/jw/log_analyzer/analysis/LogAnalysisResultAssembler.java`
 
 ## 단계별 리팩토링 계획
 
-### 1단계. 분석 도메인 모델과 용어 정리
+### 1단계. 도메인 판별 원칙 정리
 
-- `LogEntryDto`와 별도로 내부 분석용 `LogRecord`를 도입한다.
-- `LogRepository`의 역할을 문서상 `repository`가 아니라 `ingestion` 또는 `parser` 성격으로 재정의한다.
-- 현재 응답용 `AnalysisResultDto`는 외부 API 계약으로 유지하고, 내부 계산 결과는 별도 모델로 분리한다.
+작업:
 
-### 2단계. 라인 파서 인터페이스 도입
+- 각 도메인의 시그니처 규칙 정리
+- 파일명 보조 규칙 정리
+- 시그니처와 파일명으로도 판별되지 않으면 실패한다는 기준 확정
 
-- `LogParser` 인터페이스를 추가한다.
-  - 예: `boolean supports(String line)`
-  - 예: `LogRecord parse(String line)`
-- 기존 `parseBracketLine`, `parseJsonLine` 로직을 각각 별도 클래스로 이동한다.
-- `CompositeLogParser`가 현재의 `parseLine` 분기 역할을 대체하게 한다.
+완료 기준:
 
-### 3단계. URL 파생 규칙 분리
+- parser 선택 기준이 문서와 코드 기준으로 명확해진다
 
-- `extractServiceIdFromUrl`, `extractApiKeyFromUrl`, `normalizeServiceId`를 별도 extractor 또는 resolver 클래스로 이동한다.
-- bracket 로그, JSON 로그가 같은 규칙을 공유하는지 여부를 명시적으로 드러낸다.
-- 필요하면 공급자별 resolver를 둔다.
-  - 예: `KokoaServiceIdResolver`
-  - 예: `MaverServiceIdResolver`
+### 2단계. 도메인별 serviceId 정책 정리
 
-### 4단계. 입력 소스와 파싱 오케스트레이션 분리
+작업:
 
-- `MultipartFile`에서 `BufferedReader`를 여는 책임을 `LogLineSource` 계층으로 이동한다.
-- 서비스는 "소스 열기 -> 파싱 -> 집계"만 조립하고, 파일 읽기 세부 구현은 별도 컴포넌트가 담당하게 한다.
-- 이 단계에서 `LogRepository`는 제거하거나 이름과 역할을 명확히 축소한다.
+- 각 도메인의 `serviceId` 규칙 분류
+- 닫힌 도메인과 열린 도메인 구분
+- `KokoaServiceIdPolicy`, `MaverServiceIdPolicy` 같은 책임 정의
 
-### 5단계. 통계 계산기 분리
+완료 기준:
 
-- 서비스 내부의 `apiKeyCounts`, `serviceCounts`, `browserCounts` 누적 로직을 `LogStatisticsAggregator`로 이동한다.
-- 아래 계산 규칙을 메서드 단위로 분리한다.
-  - 최다 호출 API Key 선택
-  - 상위 3개 서비스 선택
-  - 브라우저 비율 계산
-- 서비스는 결과 객체를 받아 응답 DTO로 변환만 하게 만든다.
+- 각 도메인의 `serviceId` 검증/정규화 방식이 명확해진다
 
-### 6단계. 오류 처리 정책 분리
+### 3단계. 논리 모듈 경계 분리
 
-- 파서가 예외를 바로 최종 정책으로 확정하지 않도록 `ParseErrorPolicy` 또는 `ParseResult`를 도입한다.
-- 먼저 현재와 동일한 strict 정책을 유지한다.
-- 이후 필요 시 lenient 정책을 추가해도 기존 파서 구현은 건드리지 않게 한다.
+작업:
 
-### 7단계. 테스트 구조 재편
+- `core`, `parser_contract`, `parser_runtime`, `parser_implementations`, `analysis` 패키지 초안 반영
+- 공통 모델 후보 정리
 
-- 포맷별 파서 테스트
-  - bracket 정상/비정상 한 줄 테스트
-  - JSON 정상/비정상 한 줄 테스트
-- 추출기 테스트
-  - URL별 `serviceId`, `apiKey` 추출 규칙 테스트
-- 집계기 테스트
-  - tie-break, top3, browser ratio 계산 테스트
-- 서비스 테스트
-  - 컴포넌트 조립과 예외 전파만 검증
+완료 기준:
 
-이렇게 하면 변경 원인과 실패 원인을 더 작은 범위에서 식별할 수 있다.
+- 현재 코드가 어떤 모듈로 갈지 모두 매핑된다
 
-## 기대 효과
+### 4단계. parser-contract 도입
 
-- 새 로그 포맷 추가 시 기존 파서 수정 범위를 줄이고 새 파서 추가 중심으로 확장할 수 있다.
-- 서비스 계층이 비대해지지 않고 분석 흐름 조립 책임에 집중할 수 있다.
-- URL 해석 규칙, 포맷 파싱 규칙, 통계 계산 규칙을 독립적으로 테스트할 수 있다.
-- strict/lenient 같은 오류 정책 변경이 쉬워진다.
-- 특정 공급자 규칙이 늘어나도 한 클래스에 하드코딩이 누적되지 않는다.
+작업:
 
-## 우선순위 제안
+- `LogParser` 계약 정리
+- `LogRecord` 공통 모델 도입
+- `ParseResult` 정의
 
-현재 코드 기준에서 가장 먼저 착수할 가치가 큰 순서는 다음과 같다.
+완료 기준:
 
-1. `LogParser` 인터페이스와 포맷별 파서 분리
-2. URL 추출/정규화 로직 분리
-3. 통계 계산기 분리
-4. 입력 소스 추상화
-5. 오류 정책 분리
+- parser 구현체가 core 없이 계약만으로 컴파일 가능하다
 
-이 순서가 좋은 이유는 현재 동작을 크게 바꾸지 않으면서도 확장성 병목을 가장 먼저 완화할 수 있기 때문이다.
+### 5단계. parser 선택/runtime 구성 분리
+
+작업:
+
+- `CompositeLogParser`를 runtime 역할로 이동
+- parser 선택 정책 추가
+- service에서 구현체 직접 참조 제거
+
+완료 기준:
+
+- core는 parser 구현체 대신 runtime만 참조한다
+
+### 6단계. parser 구현체 분리
+
+작업:
+
+- `KokoaLogParser`, `MaverLogParser`를 구현 모듈로 이동
+- helper와 `ServiceIdPolicy`를 도메인 내부로 이동
+
+완료 기준:
+
+- parser 추가가 core 수정이 아닌 구현체 추가로 가능해진다
+
+### 7단계. analysis 독립성 강화
+
+작업:
+
+- analysis 입력을 `LogRecord`로 통일
+- parser 형식 관련 조건 제거
+
+완료 기준:
+
+- parser 변경이 analysis 변경으로 이어지지 않는다
+
+### 8단계. Gradle 멀티 모듈 전환
+
+작업:
+
+- Gradle 멀티 모듈 구성으로 분리
+- 모듈 의존 규칙을 빌드 설정으로 강제
+
+완료 기준:
+
+- 잘못된 모듈 참조가 빌드 단계에서 차단된다
+
+## 테스트 원칙
+
+### core 테스트
+
+- 요청 처리
+- orchestration 흐름
+- 예외 변환
+
+### parser runtime 테스트
+
+- parser 선택
+- 선택 실패 처리
+- ambiguous/unknown 처리
+
+### parser implementation 테스트
+
+- 시그니처 판별
+- 파일명 기반 보조 판별
+- 정상 파싱
+- 실패 케이스
+- `serviceId` 정책 검증
+
+### analysis 테스트
+
+- 통계 계산
+- 정렬 규칙
+- 결과 조합
+
+## 결론
+
+이번 리팩토링의 목적은 단순 패키지 분리가 아니라, 코어를 작게 유지하면서 parser와 analysis를 독립 모듈로 분리하는 것이다.
+
+특히 parser 선택은 앞으로 `형식 기반 추정`이 아니라 `시그니처 우선, 파일명 보조, 미식별 시 실패` 원칙으로 정리해야 한다. 이 기준이 먼저 고정되어야 이후 모듈 분리와 계약 설계도 흔들리지 않는다.
