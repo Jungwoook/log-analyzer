@@ -10,7 +10,7 @@
 
 - 현재 구조에서 스트리밍이 실제로 끊기는 지점
 - 목표 구조에서 어떤 책임이 어떻게 바뀌는지
-- 누적 집계 방식으로 바꾸기 위한 설계 방향
+- 누적 상태 객체 방식으로 바꾸기 위한 설계 방향
 - 단계별 전환 계획
 
 ## 현재 구조
@@ -64,7 +64,7 @@ repository는 `Stream<LogRecord>`를 반환하지만, service가 즉시 `toList(
 stream -> accumulate -> finalize result
 ```
 
-즉 repository는 계속 스트림을 제공하고, service 또는 analysis 계층이 이 스트림을 한 줄씩 소비하면서 누적 상태를 갱신한 뒤 마지막에 결과를 조합한다.
+즉 repository는 계속 스트림을 제공하고, service가 이 스트림을 한 줄씩 소비하면서 누적 상태 객체를 갱신한 뒤 마지막에 최종 결과를 생성한다.
 
 이 구조에서는 전체 로그를 `List<LogRecord>`로 유지하지 않는다.
 
@@ -85,91 +85,134 @@ repository는 분석 상태를 알지 않는다.
 service는 다음 역할을 맡는다.
 
 - repository에서 받은 로그 스트림을 연다
-- 누적 분석기 또는 집계 컨텍스트에 각 `LogRecord`를 전달한다
-- 최종 결과를 받아 DTO로 변환한다
+- 스트림의 각 `LogRecord`를 누적 상태 객체에 전달한다
+- 누적 상태 객체로부터 최종 분석 결과를 받는다
+- 결과를 DTO로 변환한다
 
 즉 service는 "스트림 orchestration"을 담당한다.
 
 ### analysis
 
-analysis는 더 이상 `Collection<LogRecord>` 전체를 입력으로 받지 않는다. 대신 아래 형태 중 하나로 바뀐다.
+analysis는 더 이상 `Collection<LogRecord>` 전체를 입력으로 받지 않는다. 대신 `LogRecord`를 한 건씩 받아서 내부 상태를 누적하는 객체를 중심으로 구성한다.
 
-1. 누적형 분석기
-2. 누적 상태 객체 + 최종 결과 조합기
-
-추천은 두 번째다.
-
-예시:
+이 문서에서 권장하는 기본 구조는 아래와 같다.
 
 - `AnalysisAccumulator`
   - `accept(LogRecord record)`
   - `toAnalysisResult()`
 
-이 구조라면 service는 스트림의 각 레코드를 accumulator에 전달하고, 마지막에 결과만 꺼내면 된다.
+즉 analysis의 중심은 "누적 상태 객체"다. 읽는 동안에는 상태만 갱신하고, 스트림 소비가 끝나면 마지막에 한 번만 결과를 계산한다.
 
-## 권장 설계안
+### AnalysisAccumulator 생성 원칙
 
-### 옵션 1. 단일 누적기 방식
+`AnalysisAccumulator`는 요청이 들어올 때마다 새로 생성해야 한다.
 
-하나의 accumulator가 모든 통계를 관리한다.
+- 누적 상태를 가지는 객체이므로 singleton Spring bean으로 두지 않는다
+- 이전 요청의 집계 상태가 다음 요청으로 섞이면 안 된다
+- service는 분석 시작 시 accumulator 인스턴스를 새로 만들고, 해당 요청 안에서만 사용한다
 
-예시 책임:
+## analysis 설계 방향
 
-- API Key 카운트 맵
-- 서비스 카운트 맵
-- 브라우저 카운트 맵
-- 전체 브라우저 수
+### 1. 권장 방식: 누적 상태 객체 + 최종 결과 생성
 
-장점:
-
-- 가장 단순하다
-- service와 analysis 연결이 쉽다
-- 현재 프로젝트 규모에 적합하다
-
-단점:
-
-- 분석 항목이 많아지면 accumulator가 비대해질 수 있다
-
-### 옵션 2. 항목별 누적기 조합 방식
-
-분석 항목별로 accumulator를 분리한다.
+현재 프로젝트는 분석 항목이 많지 않고, 모두 카운트 기반이다. 따라서 항목별 분석기를 여러 개 두는 것보다 하나의 누적 상태 객체에 필요한 집계 상태를 모으는 편이 더 단순하고 실용적이다.
 
 예시:
 
-- `MostCalledApiKeyAccumulator`
-- `TopServicesAccumulator`
-- `BrowserRatioAccumulator`
-- `StreamingAnalysisAssembler`
+- `AnalysisAccumulator`
+  - `Map<String, Long> apiKeyCounts`
+  - `Map<String, Long> serviceCounts`
+  - `Map<String, Long> browserCounts`
+  - `accept(LogRecord record)`
+  - `toAnalysisResult()`
 
-장점:
+이 구조에서 analysis는 아래 두 단계로 나뉜다.
 
-- 분석 항목별 책임이 분리된다
-- 향후 항목 추가에 유리하다
+1. 누적 단계
+   - 각 레코드를 읽을 때마다 카운트만 증가시킨다.
+2. 결과 생성 단계
+   - 모든 입력이 끝난 뒤 정렬, 비율 계산, top N 계산을 한 번만 수행한다.
 
-단점:
+이 방식의 장점은 다음과 같다.
 
-- 현재 프로젝트 규모에서는 다소 구조가 커질 수 있다
+- 현재 요구사항에 가장 단순하다.
+- 전체 로그를 메모리에 저장하지 않는다.
+- service가 연결하기 쉽다.
+- 이후 필요하면 내부 구현을 항목별로 다시 분리할 수 있다.
 
-### 현재 프로젝트 기준 추천
+단점은 다음과 같다.
 
-현재는 항목 수가 적고 복잡도가 크지 않으므로, 먼저 단일 누적기 방식으로 시작하는 것이 적절하다.
+- 분석 항목이 계속 늘어나면 accumulator가 커질 수 있다.
+- 항목별 책임이 한 객체 안에 모일 수 있다.
 
-이후 분석 항목이 증가하면 항목별 누적기로 다시 분리하는 것이 자연스럽다.
+하지만 현재 프로젝트 규모에서는 이 단점보다 단순성 이점이 더 크다.
 
-## 자료구조 제안
+### 2. 대안 방식: 누적형 분석기 여러 개
 
-현재 요구사항 기준으로 아래 자료구조면 충분하다.
+대안으로는 분석 항목마다 별도 누적형 분석기를 두는 방식도 있다.
+
+예시:
+
+- `MostCalledApiKeyAnalyzer`
+- `TopServicesAnalyzer`
+- `BrowserRatioAnalyzer`
+
+각 객체가 `accept(LogRecord)`와 `result()`를 가지는 식이다.
+
+이 방식의 장점은 다음과 같다.
+
+- 항목별 책임이 더 분명하다.
+- 분석 항목이 늘어날 때 구조적으로 유리하다.
+
+단점은 다음과 같다.
+
+- 현재 프로젝트 규모에서는 구조가 다소 커진다.
+- service 또는 상위 조합 계층에서 여러 분석기를 직접 묶어줘야 한다.
+
+이 문서에서는 이 방식을 기본안으로 채택하지 않는다. 현재 요구사항이 단순하기 때문에, 우선은 하나의 누적 상태 객체로 시작하는 것이 적절하다.
+
+## 권장 구조 예시
+
+현재 기준으로는 아래 같은 자료구조면 충분하다.
 
 - `Map<String, Long>` apiKeyCounts
 - `Map<String, Long>` serviceCounts
 - `Map<String, Long>` browserCounts
 
-필요한 보조 값:
+필요한 보조 계산은 모두 마지막에 수행한다.
 
-- 브라우저 전체 카운트는 `browserCounts.values()` 합산으로 계산 가능
-- 정렬은 최종 결과 생성 시점에만 수행
+- 최다 API Key 선택
+- 상위 3개 서비스 정렬
+- 브라우저 비율 계산
 
-즉 핵심은 "읽는 동안 카운트만 누적하고, 정렬은 마지막에 한 번만 수행"하는 것이다.
+즉 핵심은 "읽는 동안 카운트만 누적하고, 정렬과 비율 계산은 마지막에 한 번만 수행"하는 것이다.
+
+## 동작 보존 규칙
+
+스트리밍 전환 후에도 기존 분석 결과의 의미와 정렬 규칙은 유지해야 한다.
+
+### 최다 호출 API Key
+
+- 빈 문자열과 공백 문자열, `null` API Key는 집계에서 제외한다
+- 호출 수가 가장 큰 API Key를 선택한다
+- 호출 수가 같으면 사전순으로 더 작은 API Key를 선택한다
+- 결과가 없으면 `null`을 반환한다
+
+### 상위 3개 서비스
+
+- 빈 문자열과 공백 문자열, `null` 서비스 ID는 집계에서 제외한다
+- 호출 수 내림차순으로 정렬한다
+- 호출 수가 같으면 서비스 ID 오름차순으로 정렬한다
+- 최대 3개까지만 반환한다
+
+### 브라우저 비율
+
+- 빈 문자열과 공백 문자열, `null` 브라우저 값은 집계에서 제외한다
+- 비율 계산의 분모는 "집계 대상이 된 브라우저 건수 합계"다
+- 결과 맵은 브라우저 이름 오름차순 순서를 유지한다
+- 집계 대상 브라우저가 없으면 빈 맵을 반환한다
+
+즉 스트리밍 전환은 계산 방식 변경이지, 외부에 보이는 결과 규약 변경이 아니다.
 
 ## 예상 처리 흐름
 
@@ -178,7 +221,7 @@ analysis는 더 이상 `Collection<LogRecord>` 전체를 입력으로 받지 않
 1. controller가 파일을 받는다.
 2. service가 repository에서 `Stream<LogRecord>`를 받는다.
 3. service가 try-with-resources 안에서 스트림을 소비한다.
-4. 각 `LogRecord`를 accumulator에 전달한다.
+4. 각 `LogRecord`를 `AnalysisAccumulator`에 전달한다.
 5. 스트림 소비가 끝나면 accumulator가 `AnalysisResult`를 생성한다.
 6. service가 이를 API DTO로 변환한다.
 7. controller가 응답을 반환한다.
@@ -210,26 +253,46 @@ Stream<LogRecord> -> List<LogRecord> -> assemble(Collection)
 목표:
 
 ```text
-Stream<LogRecord> -> accumulator.accept(record) -> toAnalysisResult()
+Stream<LogRecord> -> accumulator.accept(record) -> accumulator.toAnalysisResult()
 ```
+
+또한 운영 로그에 필요한 처리 건수는 `AnalysisAccumulator`가 관리하는 것이 적절하다.
+
+- 처리 건수는 요청 단위 누적 상태이므로 accumulator 책임에 가깝다
+- service는 스트림 orchestration에 집중하고, 로그 출력 시 accumulator가 제공하는 처리 건수를 사용한다
+- 예를 들어 `processedRecordCount` 같은 필드를 두고 `accept()` 호출 시 함께 증가시킬 수 있다
 
 ### 2. LogAnalysisResultAssembler
 
-현재는 `Collection<LogRecord>`를 입력으로 받는다. 이 구조는 스트리밍 분석과 맞지 않으므로 다음 둘 중 하나로 바뀌어야 한다.
+현재는 `Collection<LogRecord>`를 입력으로 받는다. 이 구조는 스트리밍 분석과 맞지 않으므로 역할을 조정해야 한다.
 
-- accumulator 생성/조합 책임까지 가지는 구조
-- 최종 결과 조합만 담당하고, 별도 accumulator가 도입되는 구조
+권장 방향은 아래 둘 중 하나다.
 
-권장 방향은 "최종 결과 조합만 남기고, 누적 상태는 별도 클래스로 분리"하는 것이다.
+- `LogAnalysisResultAssembler`를 제거하고 `AnalysisAccumulator`가 직접 `AnalysisResult`를 반환
+- `AnalysisAccumulator`는 상태만 유지하고, `LogAnalysisResultAssembler`는 accumulator를 받아 최종 결과만 조합
 
-### 3. 계산기들
+현재 프로젝트에서는 첫 번째가 더 단순하다. 즉 `AnalysisAccumulator`가 `toAnalysisResult()`까지 가지는 구조가 실용적이다.
 
-현재 계산기들은 모두 `Collection<LogRecord>`를 입력으로 받는다. 스트리밍 구조로 바꾸려면 아래 중 하나를 선택해야 한다.
+### 3. 기존 계산기들
 
-- 계산기별 `accept(LogRecord)` / `result()` 인터페이스 도입
-- 단일 accumulator 내부로 계산 로직 흡수
+현재 계산기들은 모두 `Collection<LogRecord>`를 입력으로 받는다. 누적 상태 객체 방식으로 전환하면 아래처럼 처리하는 것이 적절하다.
 
-프로젝트 규모를 고려하면 초기 전환은 단일 accumulator가 더 적절하다.
+- 초기 전환 단계에서는 기존 계산기들을 제거하거나 역할을 축소한다.
+- 카운트 누적 로직은 `AnalysisAccumulator` 내부로 이동한다.
+- 필요해지면 이후에 accumulator 내부 구현을 다시 항목별 클래스로 분리한다.
+
+즉 지금 단계에서는 "분석기 분리"보다 "스트리밍 누적 구조 완성"을 우선한다.
+
+## 예외 및 리소스 처리 규칙
+
+스트리밍 구조에서는 예외 발생 시점과 리소스 해제 시점이 batch 구조보다 더 중요하다.
+
+- service는 반드시 `try-with-resources`로 `Stream<LogRecord>`를 열고 닫는다
+- 스트림 순회 중 예외가 발생해도 stream close가 호출되어 repository가 reader를 정리할 수 있어야 한다
+- repository는 스트림 생성과 종료 시점의 리소스 정리만 책임지고, 분석 상태나 복구 로직은 알지 않는다
+- `AnalysisAccumulator`는 입력 레코드를 받는 동안 필요한 상태만 누적하고, 예외 복구 책임은 가지지 않는다
+- 파싱 예외가 발생하면 현재처럼 즉시 실패시키되, 에러 메시지에는 가능한 한 파일명과 line number 문맥을 유지한다
+- service는 실패 로그를 남길 때 fileName과 함께 가능하면 accumulator가 보유한 처리 건수도 같이 남겨, 어느 지점까지 처리됐는지 확인할 수 있어야 한다
 
 ## 테스트 전략
 
@@ -238,13 +301,17 @@ Stream<LogRecord> -> accumulator.accept(record) -> toAnalysisResult()
 ### service 테스트
 
 - 전체 리스트를 모으지 않고도 동일 결과가 나오는지 검증
-- 대량 데이터 입력을 흉내 내는 스트림 테스트 추가 가능
+- 스트림 소비 후 최종 결과가 기존과 동일한지 검증
+- 스트림 순회 중 예외가 발생해도 close가 보장되는지 검증
+- 실패 로그 또는 예외 경로에서 처리 건수 노출이 가능한지 검증
 
 ### analysis 테스트
 
-- 누적기 단위 테스트
+- `AnalysisAccumulator` 단위 테스트
 - 레코드 입력 순서가 바뀌어도 동일 결과가 나오는지 검증
 - tie-break 정렬 규칙 유지 검증
+- 누적 중간 상태와 최종 결과 계산이 의도대로 동작하는지 검증
+- 처리 건수 누적이 실제 집계 입력 수와 일치하는지 검증
 
 ### repository 테스트
 
@@ -253,10 +320,11 @@ Stream<LogRecord> -> accumulator.accept(record) -> toAnalysisResult()
 
 ## 단계별 전환 계획
 
-### 1단계. 스트리밍 누적기 도입
+### 1단계. 누적 상태 객체 도입
 
 - `AnalysisAccumulator` 도입
 - `accept(LogRecord)`와 `toAnalysisResult()` 정의
+- apiKey, serviceId, browser 집계 상태를 accumulator에 배치
 
 ### 2단계. service 전환
 
@@ -265,8 +333,8 @@ Stream<LogRecord> -> accumulator.accept(record) -> toAnalysisResult()
 
 ### 3단계. 기존 batch 계산기 정리
 
-- `Collection<LogRecord>` 기반 계산기 제거 또는 내부 구현 축소
-- 필요 시 accumulator 내부 구현으로 통합
+- `Collection<LogRecord>` 기반 계산기 제거 또는 역할 축소
+- 필요 시 기존 계산기 이름을 accumulator 내부 private 메서드 수준으로 흡수
 
 ### 4단계. 테스트 보강
 
@@ -282,13 +350,13 @@ Stream<LogRecord> -> accumulator.accept(record) -> toAnalysisResult()
 
 ## 주의사항
 
-스트리밍 구조로 바꾼다고 해서 모든 문제가 사라지는 것은 아니다.
+누적 상태 객체 방식으로 바꾼다고 해서 메모리 사용이 0이 되는 것은 아니다.
 
 - 카운트 맵 자체는 고유 키 수만큼 메모리를 사용한다
 - 서비스 종류, API Key 종류가 매우 많으면 맵 크기도 커질 수 있다
 - 다만 현재 구조처럼 "전체 레코드 수"에 비례해서 메모리가 증가하는 것보다는 훨씬 안정적이다
 
-즉 이 전환의 목적은 메모리 사용을 0으로 만드는 것이 아니라, 증가 기준을 "전체 로그 수"에서 "집계 대상 고유 키 수"로 바꾸는 것이다.
+즉 이 전환의 목적은 메모리 사용을 없애는 것이 아니라, 증가 기준을 "전체 로그 수"에서 "집계 대상 고유 키 수"로 바꾸는 것이다.
 
 ## 결론
 
@@ -298,6 +366,6 @@ Stream<LogRecord> -> accumulator.accept(record) -> toAnalysisResult()
 
 - `Stream<LogRecord>`를 유지한다
 - service에서 `toList()`를 제거한다
-- analysis를 누적 집계 방식으로 전환한다
+- analysis를 `AnalysisAccumulator` 중심의 누적 상태 객체 방식으로 전환한다
 
-즉, 앞으로의 목표는 "스트림 입력"이 아니라 "스트림 분석"을 구현하는 것이다.
+즉 앞으로의 목표는 "스트림 입력"이 아니라 "누적 상태 객체 기반의 스트림 분석"을 구현하는 것이다.

@@ -2,6 +2,7 @@ package com.jw.log_analyzer.controller;
 
 import com.jw.log_analyzer.dto.AnalysisResultDto;
 import com.jw.log_analyzer.dto.AnalysisResultDto.TopServiceDto;
+import com.jw.log_analyzer.exception.LogProcessingException;
 import com.jw.log_analyzer.parser.contract.exception.InvalidLogFormatException;
 import com.jw.log_analyzer.service.LogAnalysisService;
 import org.junit.jupiter.api.Test;
@@ -68,5 +69,21 @@ class LogAnalysisControllerTest {
         mockMvc.perform(multipart("/api/analyze").file(file))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.message").value("Unsupported log format at line 1"));
+    }
+
+    @Test
+    void analyzeEndpointReturnsInternalServerErrorWhenInternalProcessingFails() throws Exception {
+        MockMultipartFile file = new MockMultipartFile(
+                "file",
+                "upload.log",
+                "text/plain",
+                "invalid-format".getBytes()
+        );
+        when(service.analyze(any())).thenThrow(new LogProcessingException("Unexpected error while processing log at line 1",
+                new IllegalStateException("boom")));
+
+        mockMvc.perform(multipart("/api/analyze").file(file))
+                .andExpect(status().isInternalServerError())
+                .andExpect(jsonPath("$.message").value("Internal error occurred while processing log file"));
     }
 }
