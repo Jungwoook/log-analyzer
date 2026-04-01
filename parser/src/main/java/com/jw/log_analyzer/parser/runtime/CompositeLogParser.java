@@ -21,10 +21,6 @@ public class CompositeLogParser {
 
     public LogRecord parse(String line, String fileName) {
         ParserContext context = new ParserContext(line, fileName);
-        if (context.trimmedLine().isEmpty()) {
-            return null;
-        }
-
         LogParser parser = selectionPolicy.select(parsers, context);
         return parser.parse(context);
     }

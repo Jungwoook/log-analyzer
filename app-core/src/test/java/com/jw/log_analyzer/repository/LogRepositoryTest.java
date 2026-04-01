@@ -1,8 +1,10 @@
 package com.jw.log_analyzer.repository;
 
+import com.jw.log_analyzer.exception.LogProcessingException;
 import com.jw.log_analyzer.parser.contract.LogParser;
 import com.jw.log_analyzer.parser.contract.LogRecord;
 import com.jw.log_analyzer.parser.contract.ParserContext;
+import com.jw.log_analyzer.parser.contract.exception.InvalidLogFormatException;
 import com.jw.log_analyzer.parser.implementations.KokoaLogParser;
 import com.jw.log_analyzer.parser.implementations.MaverLogParser;
 import com.jw.log_analyzer.parser.runtime.CompositeLogParser;
@@ -48,6 +50,23 @@ class LogRepositoryTest {
     }
 
     @Test
+    void streamLogsSkipsBlankLinesBeforeParsing() {
+        LogRepository repository = new LogRepository(new CompositeLogParser(List.of(new FileNameOnlyParser("maver"))));
+        MockMultipartFile file = new MockMultipartFile(
+                "file",
+                "maver-access.log",
+                "text/plain",
+                "\n \nplain-line\n\t\n".getBytes(StandardCharsets.UTF_8)
+        );
+
+        List<LogRecord> logs = readAll(repository, file);
+
+        assertThat(logs).singleElement()
+                .extracting(LogRecord::getServiceId)
+                .isEqualTo("maver");
+    }
+
+    @Test
     void streamLogsUsesFileNameHintWhenContentHasNoSignature() {
         LogRepository repository = new LogRepository(new CompositeLogParser(List.of(new FileNameOnlyParser("maver"))));
         MockMultipartFile file = new MockMultipartFile(
@@ -75,8 +94,24 @@ class LogRepositoryTest {
         );
 
         assertThatThrownBy(() -> readAll(repository, file))
-                .isInstanceOf(RuntimeException.class)
+                .isInstanceOf(InvalidLogFormatException.class)
                 .hasMessageContaining("Unable to determine log source");
+    }
+
+    @Test
+    void streamLogsWrapsUnexpectedParserRuntimeExceptionAsInternalProcessingError() {
+        LogRepository repository = new LogRepository(new CompositeLogParser(List.of(new ExplodingParser())));
+        MockMultipartFile file = new MockMultipartFile(
+                "file",
+                "exploding.log",
+                "text/plain",
+                "plain-line".getBytes(StandardCharsets.UTF_8)
+        );
+
+        assertThatThrownBy(() -> readAll(repository, file))
+                .isInstanceOf(LogProcessingException.class)
+                .hasMessageContaining("Unexpected error while processing log at line 1")
+                .hasCauseInstanceOf(IllegalStateException.class);
     }
 
     private MockMultipartFile multipartFile(String classpathLocation) {
@@ -124,6 +159,29 @@ class LogRepositoryTest {
         @Override
         public LogRecord parse(ParserContext context) {
             return new LogRecord(200, context.line(), sourceType, null, null, null);
+        }
+    }
+
+    private static class ExplodingParser implements LogParser {
+
+        @Override
+        public boolean supports(ParserContext context) {
+            return true;
+        }
+
+        @Override
+        public boolean supportsFileName(String fileName) {
+            return true;
+        }
+
+        @Override
+        public String sourceType() {
+            return "exploding";
+        }
+
+        @Override
+        public LogRecord parse(ParserContext context) {
+            throw new IllegalStateException("boom");
         }
     }
 }

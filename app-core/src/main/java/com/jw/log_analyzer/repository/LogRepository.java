@@ -1,5 +1,6 @@
 package com.jw.log_analyzer.repository;
 
+import com.jw.log_analyzer.exception.LogProcessingException;
 import com.jw.log_analyzer.parser.contract.LogParser;
 import com.jw.log_analyzer.parser.contract.LogRecord;
 import com.jw.log_analyzer.parser.contract.exception.InvalidLogFormatException;
@@ -15,7 +16,6 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
-import java.util.Objects;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Stream;
 
@@ -46,8 +46,8 @@ public class LogRepository {
         AtomicLong lineNumber = new AtomicLong(0);
 
         return reader.lines()
+                .filter(this::hasText)
                 .map(line -> safeParseLine(line, fileName, lineNumber.incrementAndGet()))
-                .filter(Objects::nonNull)
                 .onClose(() -> closeQuietly(reader));
     }
 
@@ -63,7 +63,7 @@ public class LogRepository {
             throw new InvalidLogFormatException("Unsupported log format at line " + lineNumber + ": " + e.getMessage(), e);
         } catch (RuntimeException e) {
             log.error("Unexpected log processing error. lineNumber={}", lineNumber, e);
-            throw new RuntimeException("Unexpected error while processing log at line " + lineNumber, e);
+            throw new LogProcessingException("Unexpected error while processing log at line " + lineNumber, e);
         }
     }
 
@@ -73,6 +73,10 @@ public class LogRepository {
         } catch (IOException e) {
             log.warn("Failed to close log reader", e);
         }
+    }
+
+    private boolean hasText(String line) {
+        return line != null && !line.isBlank();
     }
 
 }
